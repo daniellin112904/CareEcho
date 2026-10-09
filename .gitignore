@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.local
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Voice recordings (keep teammates' voices out of the repo)
+recordings/
+*.wav
+*.mp3
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
