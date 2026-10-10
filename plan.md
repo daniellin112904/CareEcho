@@ -16,6 +16,9 @@ One React app with two sides, backed by FastAPI and ElevenLabs.
 - **Family messages.** Staff clone a consenting family member's voice, write a message, and it plays
   on the patient screen in that voice. The live companion always keeps its own neutral voice.
 - **Staff PIN.** Protects every staff page and endpoint.
+- **Calm conversations.** Replies are one or two sentences. The agent waits 20 seconds before
+  checking in, then stays quiet, and the conversation ends by itself after 90 seconds of silence. It
+  gets the real time every minute and never offers things it can't do (like playing music).
 
 ## How it works
 

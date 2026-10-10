@@ -35,9 +35,17 @@ function Companion() {
     onMessage: ({ role, message }) => role === "agent" && setCaption(lastSentences(message)),
     onError: () => setError("I'm having trouble hearing you. Tap the circle to try again."),
   });
-  const { status, isSpeaking, getInputVolume, getOutputVolume } = conversation;
+  const { status, isSpeaking, getInputVolume, getOutputVolume, sendContextualUpdate } = conversation;
   const live = status === "connected";
   const busy = starting || status === "connecting";
+
+  // The agent only hears the time once, at the start. Without updates it guesses how
+  // much time has passed, so tell it the real time every minute (it doesn't reply to these).
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => sendContextualUpdate(`The time is now ${clockTime(new Date())}.`), 60_000);
+    return () => clearInterval(id);
+  }, [live, sendContextualUpdate]);
 
   async function toggle() {
     if (live || busy) {
@@ -86,20 +94,26 @@ function Companion() {
       <p className="patient-status" aria-live="polite">
         {error || label}
       </p>
-      {!error &&
-        (live && caption ? (
-          <p className="patient-caption" aria-live="polite">
-            {caption}
-          </p>
-        ) : (
-          <p className="patient-hint">{hint}</p>
-        ))}
+      <div className="patient-words">
+        {!error &&
+          (live && caption ? (
+            <p className="patient-caption" aria-live="polite">
+              {caption}
+            </p>
+          ) : (
+            <p className="patient-hint">{hint}</p>
+          ))}
+      </div>
     </section>
   );
 }
 
 function lastSentences(text: string, count = 2) {
   return text.split(/(?<=[.!?])\s+/).slice(-count).join(" ");
+}
+
+function clockTime(date: Date) {
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function Clock() {

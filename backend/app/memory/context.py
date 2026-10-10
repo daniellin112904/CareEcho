@@ -20,15 +20,29 @@ def get_patient_name(patient_id: str) -> str:
 
 def build_memory_context(patient_id: str) -> str:
     """Plain-text facts for the agent prompt. Only confirmed, unexpired memories belong here."""
-    tz = ZoneInfo(os.getenv("TIMEZONE", "America/New_York"))
     lines = []
     for m in current_memories()["memories"]:
         line = m["summary"]
         if m.get("event_at"):
-            at = datetime.fromisoformat(m["event_at"]).astimezone(tz)
-            line += f", {at:%A, %B} {at.day} at {at:%I:%M %p}".replace(" 0", " ")
+            line += f", {spoken_time(m['event_at'])}"
         # Not source_quote: words like "tomorrow" in it go stale the next day
         for key, value in (m.get("details") or {}).items():
-            line += f"; {key}: {value}"
+            line += f"; {key.replace('_', ' ')}: {spoken_time(value) if is_timestamp(value) else value}"
         lines.append(f"- {line}")
     return "\n".join(lines) or "- Nothing has been confirmed yet."
+
+
+def spoken_time(iso: str) -> str:
+    """'2026-10-10T14:30:00-04:00' -> 'Saturday, October 10 at 2:30 PM', in the patient's timezone."""
+    at = datetime.fromisoformat(iso).astimezone(ZoneInfo(os.getenv("TIMEZONE", "America/New_York")))
+    return f"{at:%A, %B} {at.day} at {at:%I:%M %p}".replace(" 0", " ")
+
+
+def is_timestamp(value) -> bool:
+    if not isinstance(value, str) or "T" not in value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
