@@ -233,3 +233,34 @@
 .patient-care-told .patient-card-detail {
   color: #791f1f;
 }
+
+/* A reminder takes the whole tray while it's up */
+.patient-reminder {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  border: 2px solid #b5d4f4;
+}
+
+.patient-reminder-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.patient-reminder-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.patient-ok {
+  height: 56px;
+  min-width: 88px;
+  padding: 0 22px;
+  border: 1px solid var(--p-hairline);
+  border-radius: 999px;
+  background: #fff;
+  font-family: var(--v-body);
+  font-size: 18px;
+  font-weight: 500;
+}

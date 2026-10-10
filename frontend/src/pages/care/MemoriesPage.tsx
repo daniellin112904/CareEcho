@@ -1,9 +1,20 @@
 import { useEffect, useState } from "react";
-import { getCurrentMemories, type Memory } from "../../api";
+import { getCurrentMemories, sendReminderNow, type Memory } from "../../api";
 
 export default function MemoriesPage() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [error, setError] = useState("");
+  const [sent, setSent] = useState<Record<string, string>>({});
+
+  async function remindNow(memory: Memory) {
+    try {
+      const reminder = await sendReminderNow(memory.id);
+      setSent((current) => ({ ...current, [memory.id]: reminder.text }));
+      setError("");
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
 
   useEffect(() => {
     getCurrentMemories()
@@ -14,7 +25,10 @@ export default function MemoriesPage() {
   return (
     <section className="care-section">
       <h1>Memories</h1>
-      <p className="care-lede">What Vela is allowed to tell the patient. It never answers from anything else.</p>
+      <p className="care-lede">
+        What Vela is allowed to tell the patient. It never answers from anything else. Confirmed plans are also
+        spoken as reminders 30 and 5 minutes before; "Remind now" sends one straight away.
+      </p>
       <p className="care-notice">
         Showing sample data. Reviewing, confirming, and adding memories arrives with the memory system.
       </p>
@@ -37,6 +51,12 @@ export default function MemoriesPage() {
             <span className="memory-status" data-status={m.status}>
               {m.status}
             </span>
+            {m.status === "confirmed" && m.event_at && (
+              <button className="care-secondary" onClick={() => remindNow(m)}>
+                Remind now
+              </button>
+            )}
+            {sent[m.id] && <p className="memory-sent">Sent to the patient screen: "{sent[m.id]}"</p>}
           </li>
         ))}
       </ul>

@@ -177,3 +177,19 @@ export type Interaction = {
 export function listInteractions() {
   return request<{ interactions: Interaction[] }>("/interactions");
 }
+
+// Reminders
+
+export type Reminder = { id: string; at: string; text: string; memory_id: string };
+
+export function getUpcomingReminders() {
+  return request<{ reminders: Reminder[] }>("/reminders/upcoming");
+}
+
+export function reminderAudioUrl(id: string) {
+  return `${API_URL}/reminders/${id}/audio`;
+}
+
+export function sendReminderNow(memoryId: string) {
+  return request<Reminder>("/reminders/now", { method: "POST", body: JSON.stringify({ memory_id: memoryId }) });
+}

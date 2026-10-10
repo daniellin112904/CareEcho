@@ -413,6 +413,17 @@
 
 /* Memories */
 
+.memory-row {
+  flex-wrap: wrap;
+}
+
+.memory-sent {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--v-success);
+  font-size: 14px;
+}
+
 .memory-when {
   color: var(--v-muted);
   font-size: 14px;

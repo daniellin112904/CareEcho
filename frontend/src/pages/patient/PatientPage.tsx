@@ -11,35 +11,62 @@ import {
 } from "../../api";
 import { createAgentSession } from "../../voice/agentTools";
 import Orb, { type OrbMode } from "../../voice/Orb";
+import { useReminders } from "./useReminders";
 import "./patient.css";
 
 export default function PatientPage() {
-  // The open urgent alert, if any: shown until staff mark it resolved
-  const [urgentAlertId, setUrgentAlertId] = useState<string | null>(null);
-  const clearUrgent = useCallback(() => setUrgentAlertId(null), []);
-
   return (
     <ConversationProvider>
-      <main className="patient">
-        <Clock />
-        <Companion onUrgentAlert={setUrgentAlertId} />
-        <section className="patient-tray">
-          {/* In an emergency only this card shows, so nothing competes with it */}
-          {urgentAlertId ? (
-            <CareTeamToldCard alertId={urgentAlertId} onResolved={clearUrgent} />
-          ) : (
-            <>
-              <ComingUp />
-              <FamilyMessageCard />
-            </>
-          )}
-        </section>
-      </main>
+      <PatientScreen />
     </ConversationProvider>
   );
 }
 
-function Companion({ onUrgentAlert }: { onUrgentAlert: (alertId: string) => void }) {
+function PatientScreen() {
+  // The open urgent alert, if any: shown until staff mark it resolved
+  const [urgentAlertId, setUrgentAlertId] = useState<string | null>(null);
+  const clearUrgent = useCallback(() => setUrgentAlertId(null), []);
+  const { status } = useConversationStatus();
+  const reminders = useReminders(status === "connecting" || status === "connected");
+
+  return (
+    <main className="patient">
+      <Clock />
+      <Companion
+        onUrgentAlert={setUrgentAlertId}
+        announcement={reminders.speaking ? (reminders.reminder?.text ?? null) : null}
+      />
+      <section className="patient-tray">
+        {/* One card at a time when something needs attention: an emergency first, then a reminder */}
+        {urgentAlertId ? (
+          <CareTeamToldCard alertId={urgentAlertId} onResolved={clearUrgent} />
+        ) : reminders.reminder ? (
+          <ReminderCard
+            text={reminders.reminder.text}
+            speaking={reminders.speaking}
+            needsTap={reminders.needsTap}
+            onReplay={reminders.replay}
+            onDismiss={reminders.dismiss}
+          />
+        ) : (
+          <>
+            <ComingUp />
+            <FamilyMessageCard />
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function Companion({
+  onUrgentAlert,
+  announcement,
+}: {
+  onUrgentAlert: (alertId: string) => void;
+  /** A reminder being spoken right now: the orb speaks and its words show as the caption */
+  announcement: string | null;
+}) {
   const [starting, setStarting] = useState(false);
   const [caption, setCaption] = useState("");
   const [error, setError] = useState("");
@@ -93,13 +120,17 @@ function Companion({ onUrgentAlert }: { onUrgentAlert: (alertId: string) => void
     }
   }
 
-  const mode: OrbMode = busy ? "connecting" : live ? (isSpeaking ? "speaking" : "listening") : "idle";
-  const label = {
-    idle: "Talk to me",
+  const announcing = announcement !== null && !live && !busy;
+  const mode: OrbMode =
+    busy ? "connecting" : live ? (isSpeaking ? "speaking" : "listening") : announcing ? "speaking" : "idle";
+  const label = announcing
+    ? "A reminder"
+    : {
+        idle: "Talk to me",
     connecting: "One moment…",
-    listening: "I'm listening",
-    speaking: "Speaking…",
-  }[mode];
+        listening: "I'm listening",
+        speaking: "Speaking…",
+      }[mode];
   const hint = {
     idle: "Tap the circle and ask me anything",
     connecting: "Getting ready to listen",
@@ -120,9 +151,9 @@ function Companion({ onUrgentAlert }: { onUrgentAlert: (alertId: string) => void
       </p>
       <div className="patient-words">
         {!error &&
-          (live && caption ? (
+          (announcing || (live && caption) ? (
             <p className="patient-caption" aria-live="polite">
-              {caption}
+              {announcing ? announcement : caption}
             </p>
           ) : (
             <p className="patient-hint">{hint}</p>
@@ -206,6 +237,37 @@ function ComingUp() {
           <p className="patient-card-title">No plans yet today</p>
         </>
       )}
+    </div>
+  );
+}
+
+function ReminderCard({
+  text,
+  speaking,
+  needsTap,
+  onReplay,
+  onDismiss,
+}: {
+  text: string;
+  speaking: boolean;
+  needsTap: boolean;
+  onReplay: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="patient-card patient-reminder" role="status">
+      <div className="patient-reminder-copy">
+        <p className="patient-card-label">Reminder</p>
+        <p className="patient-card-title">{text}</p>
+      </div>
+      <div className="patient-reminder-actions">
+        <button className="patient-play" onClick={onReplay}>
+          {needsTap ? "Hear it" : speaking ? "Speaking…" : "Hear again"}
+        </button>
+        <button className="patient-ok" onClick={onDismiss}>
+          OK
+        </button>
+      </div>
     </div>
   );
 }

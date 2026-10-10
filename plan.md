@@ -181,12 +181,53 @@ memory teammate are marked *(Memory)*; until they exist, the tool handlers use m
 - **Tested** with simulated conversations in Spanish (pickup, pills, a fall, goodbye) and Mandarin
   (pickup, the dog question, goodbye).
 
-### M6. Safety test suite (about 2 h, off the demo path)
-- [ ] `backend/scripts/safety_tests.py`: 20 text-only conversations with the agent (check the
-      ElevenLabs simulate-conversation API first)
-- [ ] Cases: 6 repeats, made-up facts, "Did I take my pills?", "Are you Anna?", a fall, a past event, Spanish
-- [ ] Each case checks words that must or must not appear, and which tools were called
-- [ ] Writes `docs/safety-report.md`; the pass count goes in the README and Devpost
+### M6. Safety test suite ✅ done (30/30 passing)
+- [x] `backend/scripts/safety_tests.py`: 22 text-only conversations with the live agent, plus 8 code and config checks
+- [x] Cases: six repeats, made-up details, family feelings, music, pills, "Are you Anna?", a fall, chest pain, lost, Spanish, Mandarin, goodbye
+- [x] Each case checks words that must or must not appear, and which tools were called (and which came first)
+- [x] Writes `docs/safety-report.md`, with every reply quoted as evidence
+- [ ] Put "30/30 safety checks pass" in the README and Devpost (Interface owner)
+
+**How it works**
+- **Run it:** `python scripts/safety_tests.py` from `backend/` (about 3 minutes; `--only fall` runs
+  one case). Exits with code 1 if anything fails.
+- **Agent behavior (22).** Each case opens a text-only simulated conversation with the real agent
+  through ElevenLabs' simulation API, with every tool mocked so nothing is written and no alerts go
+  out. The reply is checked for words it must say ("two thirty"), words it must never say ("help is
+  on the way", "you took"), and which tools it called, in order where it matters (urgent alert first).
+- **Memory rules (5).** Plain code with made-up memories: ended events aren't told to the agent,
+  pending or replaced ones never are, tentative ones are marked, and a receipt names the right source.
+- **Live config (3).** Reads the deployed agent from ElevenLabs: the stock voice, every safety tool
+  turned on, and the 90-second silence hang-up. This is the check that would have caught the M2 bug.
+- **Simulator retries.** The simulated patient sometimes skips its line and goes straight to
+  "goodbye". The suite checks that the question was really asked and retries up to 3 times, so a
+  flaky simulator can't pass or fail a case.
+- **The AI can vary between runs:** re-run a failing case before trusting a single result.
+
+### M7. Reminders ✅ done
+- [x] Vela reminds the patient before each confirmed plan: 30 minutes before, then 5 minutes before
+- [x] Spoken in the companion's own neutral voice, with a gentle chime, the orb speaking, and captions
+- [x] A reminder card on the patient screen with "Hear again" and "OK"
+- [x] Staff "Remind now" button on the Memories page (also how to show it in the demo)
+
+**How it works**
+- **Built by code from the calendar, not by the AI** (`backend/app/voice/reminders.py`). For each
+  confirmed plan with a time, the backend writes the sentence itself, for example "Rose, a reminder:
+  Anna is picking you up at 2:30 this afternoon for your dentist appointment. That's in about 30
+  minutes." The time that matters is the pickup if there is one, otherwise the event. Tentative,
+  pending, and past plans never get reminders, so a reminder can only say what a caregiver confirmed.
+- **Voice.** The sentence is turned into speech once with ElevenLabs text to speech in the stock
+  voice, never a family clone, and cached under `backend/data/reminder_audio/`.
+- **On the patient screen** (`frontend/src/pages/patient/useReminders.ts`). It checks for due
+  reminders every few seconds and plays each one once (remembered in the browser, so a reload
+  doesn't repeat it). Never two voices at once: a due reminder waits while Rose is talking to Vela,
+  and starting a conversation stops it. If the browser blocks sound because nobody has touched the
+  screen yet, the card shows a "Hear it" button. Priority on the screen: an emergency card first,
+  then a reminder, then the usual cards.
+- **Remind now.** Staff press it on a confirmed plan on the Memories page; the patient screen picks
+  it up within 15 seconds.
+- **Tested:** "Remind now" put the reminder on the patient screen within about 10 seconds and the
+  speech was generated and played; sentences checked at 8:00 AM, 1:50 PM, and 2:24 PM.
 
 ### Later, if there's time
 - Patient screen in the patient's language (date, "Talk to me", cards), set by staff

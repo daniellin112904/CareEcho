@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listAlerts, type Alert, type AlertKind } from "../../api";
+import { chime } from "../../voice/chime";
 
 export const KIND_LABEL: Record<AlertKind, string> = {
   missing_info: "Needs an answer",
@@ -37,7 +38,7 @@ export function useAlertFeed() {
         if (fresh.length === 0) return;
         fresh.forEach((a) => seen.current!.add(a.id));
         setToasts((current) => [...fresh, ...current].slice(0, 3));
-        chime(fresh.some((a) => a.kind === "help_requested"));
+        chime(fresh.some((a) => a.kind === "help_requested") ? "urgent" : "alert");
         notifyDesktop(fresh);
       })
       .catch((err: Error) => setError(err.message));
@@ -56,31 +57,6 @@ export function useAlertFeed() {
   const visibleToasts = toasts.filter((t) => openIds.has(t.id));
 
   return { feed: { alerts, error, refresh } satisfies AlertFeed, toasts: visibleToasts, dismiss, openCount: openIds.size };
-}
-
-let audio: AudioContext | null = null;
-
-/** A soft two-note chime, generated in the browser so there's no sound file to load. */
-function chime(urgent: boolean) {
-  try {
-    audio ??= new AudioContext();
-    void audio.resume();
-    const notes = urgent ? [880, 660, 880, 660] : [660, 880];
-    notes.forEach((frequency, i) => {
-      const start = audio!.currentTime + i * 0.18;
-      const tone = audio!.createOscillator();
-      const volume = audio!.createGain();
-      tone.frequency.value = frequency;
-      volume.gain.setValueAtTime(0, start);
-      volume.gain.linearRampToValueAtTime(0.15, start + 0.02);
-      volume.gain.exponentialRampToValueAtTime(0.001, start + 0.5);
-      tone.connect(volume).connect(audio!.destination);
-      tone.start(start);
-      tone.stop(start + 0.5);
-    });
-  } catch {
-    // No sound is fine: the toast and badge still show
-  }
 }
 
 function notifyDesktop(alerts: Alert[]) {
