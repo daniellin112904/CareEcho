@@ -1,11 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Inter+Tight:wght@300;400&display=swap");
-
 .patient {
-  --p-ink: #0b0b0b;
-  --p-muted: #6b6865;
-  --p-tray: #f3f1ef;
-  --p-hairline: #e3dfdb;
-  --p-heading: "Inter Tight", Inter, system-ui, sans-serif;
+  --p-ink: var(--v-ink);
+  --p-muted: var(--v-muted);
+  --p-tray: var(--v-tray);
+  --p-hairline: var(--v-hairline);
+  --p-heading: var(--v-heading);
 
   height: 100svh;
   overflow: hidden;
@@ -13,9 +11,9 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: clamp(12px, 2.5vh, 28px);
   padding: clamp(20px, 4vh, 40px) clamp(20px, 5vw, 56px);
-  background: #fdfcfc;
+  background: var(--v-bg);
   color: var(--p-ink);
-  font-family: Inter, system-ui, sans-serif;
+  font-family: var(--v-body);
 }
 
 .patient :where(p) {

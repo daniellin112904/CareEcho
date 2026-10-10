@@ -1,0 +1,22 @@
+/* Shared look for the patient and staff sides: off-white canvas, light headlines,
+   black pill for the main action, gray trays holding white cards. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Inter+Tight:wght@300;400&display=swap");
+
+:root {
+  --v-bg: #fdfcfc;
+  --v-card: #ffffff;
+  --v-tray: #f3f1ef;
+  --v-hairline: #e3dfdb;
+  --v-ink: #0b0b0b;
+  --v-muted: #6b6865;
+  --v-danger: #a32d2d;
+  --v-success: #0f6e56;
+
+  --v-tag-green-bg: #e1f5ee;
+  --v-tag-green: #085041;
+  --v-tag-amber-bg: #faeeda;
+  --v-tag-amber: #633806;
+
+  --v-body: Inter, system-ui, sans-serif;
+  --v-heading: "Inter Tight", Inter, system-ui, sans-serif;
+}
