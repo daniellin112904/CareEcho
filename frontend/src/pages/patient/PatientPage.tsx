@@ -79,7 +79,7 @@ function Companion({
     },
     onConnect: ({ conversationId }) => agentSession.current?.setConversationId(conversationId),
     onDisconnect: () => agentSession.current?.flush(),
-    onError: () => setError("I'm having trouble hearing you. Tap the circle to try again."),
+    onError: () => setError("I'm having trouble hearing you. Tap the candle to try again."),
   });
   const { status, isSpeaking, getInputVolume, getOutputVolume, sendContextualUpdate } = conversation;
   const live = status === "connected";
@@ -114,7 +114,7 @@ function Companion({
         clientTools: agentSession.current.clientTools,
       });
     } catch {
-      setError("I can't connect right now. Tap the circle to try again.");
+      setError("I can't connect right now. Tap the candle to try again.");
     } finally {
       setStarting(false);
     }
@@ -132,9 +132,9 @@ function Companion({
         speaking: "Speaking…",
       }[mode];
   const hint = {
-    idle: "Tap the circle and ask me anything",
+    idle: "Tap the candle and ask me anything",
     connecting: "Getting ready to listen",
-    listening: "Tap the circle when you're done",
+    listening: "Tap the candle when you're done",
     speaking: "",
   }[mode];
 
@@ -186,7 +186,10 @@ function Clock() {
   return (
     <header className="patient-top">
       <div className="patient-bar">
-        <span className="patient-mark">Vela</span>
+        <span className="patient-mark">
+          <img src="/vela.svg" alt="" />
+          Vela
+        </span>
         <span className="patient-pill">
           {clock} {part}
         </span>

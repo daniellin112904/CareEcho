@@ -29,9 +29,6 @@ export default function MemoriesPage() {
         What Vela is allowed to tell the patient. It never answers from anything else. Confirmed plans are also
         spoken as reminders 30 and 5 minutes before; "Remind now" sends one straight away.
       </p>
-      <p className="care-notice">
-        Showing sample data. Reviewing, confirming, and adding memories arrives with the memory system.
-      </p>
       {error && <p className="care-error">{error}</p>}
       <ul className="memory-list">
         {memories.map((m) => (

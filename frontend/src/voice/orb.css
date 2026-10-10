@@ -5,42 +5,48 @@
   aspect-ratio: 1;
   padding: 0;
   border: 0;
-  border-radius: 50%;
+  border-radius: 24%;
   background: none;
   -webkit-tap-highlight-color: transparent;
 }
 
-.orb-ring {
-  position: absolute;
-  inset: -7%;
-  border: 2px solid #9fe1cb;
-  border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
+.orb svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
-.orb-body {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  border-radius: 50%;
+.orb-flame {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
   will-change: transform;
 }
 
-.orb-blob {
-  position: absolute;
-  border-radius: 50%;
-  pointer-events: none;
-  will-change: transform;
+.orb-glow {
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
-/* Fixed highlight and darker rim keep it reading as a sphere while the colors move */
-.orb-shade {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 32% 26%, rgb(255 255 255 / 0.55) 0%, rgb(255 255 255 / 0) 34%),
-    radial-gradient(circle at 50% 50%, rgb(0 0 0 / 0) 58%, rgb(25 20 70 / 0.3) 100%);
+.orb-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: orb-blink 4.5s infinite;
+}
+
+@keyframes orb-blink {
+  0%,
+  93%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-eyes {
+    animation: none;
+  }
 }

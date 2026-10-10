@@ -40,7 +40,10 @@ function StaffShell({ onLock }: { onLock: () => void }) {
   return (
     <div className="care">
       <header className="care-bar">
-        <span className="care-mark">Vela</span>
+        <span className="care-mark">
+          <img src="/vela.svg" alt="" />
+          Vela
+        </span>
         <nav className="care-nav">
           <NavLink to="voices">Family messages</NavLink>
           <NavLink to="memories">Memories</NavLink>
