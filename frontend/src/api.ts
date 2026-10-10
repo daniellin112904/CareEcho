@@ -7,10 +7,20 @@ export type Memory = {
   summary: string;
   details: Record<string, unknown> | null;
   event_at: string | null;
+  /** A day with no time ("Anna might visit Saturday"): event_at is that day's midnight */
+  all_day?: boolean;
   status: string;
   source: string;
   source_quote: string | null;
+  certainty?: Certainty | null;
+  confirmed_at?: string | null;
+  /** For an update: the memory it replaces (or replaced, once confirmed) */
+  supersedes_id?: string | null;
+  /** The caregiver session it was extracted from */
+  session_id?: string | null;
 };
+
+export type Certainty = "definite" | "tentative";
 
 export type Voice = { voice_id: string; name: string };
 
@@ -50,6 +60,58 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export function getCurrentMemories(topic?: string) {
   const query = topic ? `?topic=${encodeURIComponent(topic)}` : "";
   return request<{ memories: Memory[] }>(`/memories/current${query}`);
+}
+
+// Caregiver memories (staff): extraction and review. Nothing pending is ever spoken; a memory
+// reaches the patient only once staff confirm it. See docs/memory-track.md, "API for the
+// Interface owner". Error messages (409 and 503 especially) are written to be shown as they are.
+
+/** A memory waiting for staff, with what to check before confirming it */
+export type PendingMemory = Memory & {
+  /** What extraction flagged for a person to check, like "No day was said..." */
+  warnings: string[];
+  /** For an update: the current memory it would replace */
+  replaces: Pick<Memory, "id" | "summary" | "event_at" | "all_day" | "details" | "status"> | null;
+  /** The memory it replaces was already changed or cancelled: it can only be rejected */
+  stale: boolean;
+};
+
+export type ExtractionResult = {
+  session_id: string;
+  /** The new pending memories, each with its warnings */
+  candidates: (Memory & { warnings: string[] })[];
+  /** What was left out on purpose, and why ("medicine is never saved as a memory") */
+  dropped: { summary: string | null; reason: string }[];
+};
+
+/** What a caregiver said, turned into pending memories (takes a few seconds: Gemini) */
+export function submitTranscript(transcript: string) {
+  return request<ExtractionResult>("/sessions/transcript", {
+    method: "POST",
+    body: JSON.stringify({ transcript, source: "caregiver_typed" }),
+  });
+}
+
+export function listPendingMemories() {
+  return request<{ pending: PendingMemory[] }>("/memories/pending");
+}
+
+/** From now on Vela may say it. Pass a certainty only to change what extraction proposed. */
+export function confirmMemory(id: string, certainty?: Certainty) {
+  return request<Memory>(`/memories/${id}/confirm`, {
+    method: "POST",
+    body: JSON.stringify(certainty ? { certainty } : {}),
+  });
+}
+
+/** A pending memory was wrong: it's kept as rejected and never spoken */
+export function rejectMemory(id: string) {
+  return request<Memory>(`/memories/${id}/reject`, { method: "POST" });
+}
+
+/** A current plan was cancelled: kept for receipts of past answers, never spoken again */
+export function cancelMemory(id: string) {
+  return request<Memory>(`/memories/${id}/cancel`, { method: "POST" });
 }
 
 export function startVoiceSession() {
@@ -130,6 +192,8 @@ export function logInteraction(interaction: {
   answer: string;
   memory_ids: string[];
   answered: boolean;
+  /** The patient may need help (counted as "Asked for help" on the dashboard) */
+  urgent?: boolean;
 }) {
   return request<unknown>("/interactions", { method: "POST", body: JSON.stringify(interaction) });
 }

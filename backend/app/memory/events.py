@@ -1,10 +1,11 @@
 """What happens during conversations: questions answered, things the patient said, and alerts.
 
-The records are saved through app/store.py (JSON files today, Tiger Data later), so these
-endpoints don't change when storage does.
+The records are saved through app/store.py, in Tiger Data (JSON files only without a
+database). Answers go to the interactions hypertable, which feeds the dashboard's hourly counts.
 """
 
 import re
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,9 +28,11 @@ class Interaction(BaseModel):
     topic: str = Field(max_length=100)
     question: str = Field(max_length=1000)
     answer: str = Field(max_length=2000)
-    memory_ids: list[str] = []
+    memory_ids: list[str] = Field(default=[], max_length=50)
     answered: bool = True
     latency_ms: int | None = None
+    # The patient may need help (an urgent alert went out during this turn)
+    urgent: bool = False
 
 
 class Statement(BaseModel):
@@ -44,7 +47,25 @@ class NewAlert(BaseModel):
 
 @router.post("/interactions")
 def log_interaction(body: Interaction):
-    return store.add_interaction(**body.model_dump())
+    """One answer the agent gave. Its topic is set here, by code, not by the AI: the dashboard
+    counts repeated questions by topic, and the agent's own words for it vary ("pickup time",
+    "leaving", "Anna"), which would split one question into many."""
+    fields = body.model_dump(exclude={"urgent"})
+    return store.add_interaction(**{**fields, "topic": topic_for(body)})
+
+
+def topic_for(body: Interaction) -> str:
+    """In order: "Asked for help" for an emergency; "Asked the care team" when the answer was
+    to ask them; the memory the answer used ("Dentist appointment", see receipt below);
+    otherwise the agent's own topic, or "Other"."""
+    if body.urgent:
+        return "Asked for help"
+    if not body.answered:
+        return "Asked the care team"
+    sources = receipt(body.model_dump(), store.memories_by_id(body.memory_ids))["sources"]
+    if sources:
+        return sources[0]["summary"][:100]
+    return body.topic.strip() or "Other"
 
 
 @router.post("/patient/statements")
@@ -85,6 +106,14 @@ def list_alerts():
 def resolve_alert(alert_id: str):
     if not store.resolve_alert(alert_id):
         raise HTTPException(404, "That alert no longer exists")
+
+
+@staff_router.get("/dashboard")
+def dashboard():
+    """What the care team should see at a glance: what the patient keeps asking about (today and
+    per hour, from the TimescaleDB aggregate), open alerts by kind, and what the patient said
+    they did today."""
+    return store.dashboard(PATIENT_ID, datetime.now(timezone.utc))
 
 
 @staff_router.get("/interactions")

@@ -56,6 +56,9 @@ def _plan(memory: dict):
     details = memory.get("details") or {}
     who = details.get("who") if isinstance(details.get("who"), str) else None
     pickup = details.get("pickup_at")
+    # An all-day plan ("Anna might visit Saturday") has no time to remind at, unless a pickup has one
+    if memory.get("all_day") and not (who and isinstance(pickup, str)):
+        return None
     at = datetime.fromisoformat(pickup if who and isinstance(pickup, str) else memory["event_at"])
     summary = memory["summary"]
     return at, (who if pickup else None), summary[:1].lower() + summary[1:]
