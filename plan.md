@@ -29,12 +29,32 @@ Patient asks something -> agent calls get_memories -> answers only from what com
 Staff writes message -> backend speaks it in the family voice (ElevenLabs) -> patient taps Play
 ```
 
-## Still mock data
+## Moving to Tiger Data (for the memory teammate)
 
-Memories are still the mock list in `backend/app/memory/routes.py`. Alerts, questions answered,
-and things the patient said are saved as JSON in `backend/data/` by `backend/app/memory/events.py`,
-in the same shape as the `schema.sql` tables. Swap those for Tiger Data queries and everything
-else keeps working.
+Every record the voice features save or read goes through one file: **`backend/app/store.py`**.
+Today it writes JSON files in `backend/data/`. To switch, replace each function's body with the SQL
+in its docstring. The endpoints, the agent, and the frontend don't change.
+
+| In `store.py` | Today | Tiger Data |
+|---|---|---|
+| `current_memories`, `memories_by_id` | mock list in `memory/routes.py` | `memories` (`memories_by_id` should include superseded versions, for receipts) |
+| `patient_name` | `"Rose"` | a patients table |
+| `add_interaction`, `list_interactions` | `interactions.json` | `interactions` hypertable |
+| `add_statement` | `statements.json` | `memories` rows with status `self_reported`, source `patient` |
+| `add_alert`, `get_alert`, `list_alerts`, `resolve_alert` | `alerts.json` | `alerts` |
+| `add_family_message`, `list_…`, `delete_…` | `family_messages.json` | `family_messages` (new) |
+| `add_sent_reminder`, `recent_sent_reminders` | `reminders_now.json` | `reminders_sent` (new) |
+
+- **Schema.** The new tables and two extra `interactions` columns are in
+  `backend/app/memory/schema_voice.sql`, so `schema.sql` stays yours. `scripts/init_db.py` now runs
+  both files.
+- **Audio stays on disk.** Family message and reminder MP3s are a cache in `backend/data/`,
+  regenerated from the text when missing, so they don't need a table.
+- **IDs.** The mock memory ID `mock-1` isn't a UUID, so `interactions.memory_ids` (a `UUID[]`)
+  accepts it only once real memories exist.
+- **Snowflake life story.** Not wired yet. When `GET /life-story?q=` exists, the voice side adds a
+  `search_life_story` tool to the agent (`app/voice/agent.py`) and its handler
+  (`frontend/src/voice/agentTools.ts`).
 
 ## Next: trust features + first-language mode
 

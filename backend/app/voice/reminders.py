@@ -10,27 +10,20 @@ otherwise the event itself. Staff can also send one right away from the Memories
 """
 
 import hashlib
-import json
 import os
-import threading
-import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app import store
 from app.auth import require_staff
-from app.memory.context import PATIENT_ID, get_patient_name
-from app.memory.routes import current_memories
+from app.store import DATA_DIR, PATIENT_ID
 from app.voice.agent import DEFAULT_VOICE_ID
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 AUDIO_DIR = DATA_DIR / "reminder_audio"
-SENT_NOW = DATA_DIR / "reminders_now.json"
-_lock = threading.Lock()
 
 LEADS = [(timedelta(minutes=30), "30min"), (timedelta(minutes=5), "5min")]
 # A reminder still plays if the patient screen catches it up to this late (e.g. after a reload)
@@ -73,7 +66,7 @@ def _sentence(memory: dict, lead: str, now: datetime) -> str | None:
     if not plan:
         return None
     at, who, what = plan
-    name = get_patient_name(PATIENT_ID)
+    name = store.patient_name(PATIENT_ID)
     if who and lead == "5min":
         return f"{name}, {who} will be here in about five minutes to pick you up for your {what}."
     main = (
@@ -85,14 +78,10 @@ def _sentence(memory: dict, lead: str, now: datetime) -> str | None:
     return f"{name}, a reminder: {main}.{soon}"
 
 
-def _sent_now() -> list[dict]:
-    return json.loads(SENT_NOW.read_text(encoding="utf-8")) if SENT_NOW.exists() else []
-
-
 def due_reminders(now: datetime | None = None) -> list[dict]:
     """Reminders due within the next 12 hours, or due in the last few minutes."""
     now = now or datetime.now(timezone.utc)
-    memories = {m["id"]: m for m in current_memories()["memories"]}
+    memories = {m["id"]: m for m in store.current_memories(PATIENT_ID)}
     out = []
     for memory in memories.values():
         plan = _plan(memory)
@@ -103,9 +92,8 @@ def due_reminders(now: datetime | None = None) -> list[dict]:
             if now - GRACE <= at <= now + timedelta(hours=12):
                 text = _sentence(memory, kind, now)
                 out.append({"id": f"{memory['id']}-{kind}", "at": at.isoformat(), "text": text, "memory_id": memory["id"]})
-    for sent in _sent_now():
-        at = datetime.fromisoformat(sent["at"])
-        if now - GRACE <= at and sent["memory_id"] in memories:
+    for sent in store.recent_sent_reminders(PATIENT_ID, since=now - GRACE):
+        if sent["memory_id"] in memories:
             text = _sentence(memories[sent["memory_id"]], "now", now)
             if text:
                 out.append({**sent, "text": text})
@@ -144,13 +132,8 @@ class RemindNow(BaseModel):
 @staff_router.post("/reminders/now")
 def remind_now(body: RemindNow):
     """Staff send a reminder right away. The patient screen picks it up within 15 seconds."""
-    memory = next((m for m in current_memories()["memories"] if m["id"] == body.memory_id), None)
+    memory = next((m for m in store.current_memories(PATIENT_ID) if m["id"] == body.memory_id), None)
     if not memory or not _plan(memory):
         raise HTTPException(400, "Only a confirmed plan with a time can be sent as a reminder")
-    sent = {"id": f"{body.memory_id}-now-{uuid.uuid4().hex[:8]}", "at": datetime.now(timezone.utc).isoformat(), "memory_id": body.memory_id}
-    with _lock:
-        DATA_DIR.mkdir(exist_ok=True)
-        tmp = SENT_NOW.with_suffix(".tmp")
-        tmp.write_text(json.dumps([*_sent_now()[-20:], sent], indent=2), encoding="utf-8")
-        os.replace(tmp, SENT_NOW)
+    sent = store.add_sent_reminder(body.memory_id)
     return {**sent, "text": _sentence(memory, "now", datetime.now(timezone.utc))}

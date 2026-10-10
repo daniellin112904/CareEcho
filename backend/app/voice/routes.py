@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.auth import require_staff
-from app.memory.context import PATIENT_ID, build_facts, get_patient_name
+from app.memory.context import build_facts
+from app.store import PATIENT_ID, patient_name
 from app.voice import messages
 from app.voice.agent import DEFAULT_VOICE_ID
 
@@ -65,7 +66,7 @@ def start_session():
     return {
         "token": token,
         "dynamic_variables": {
-            "patient_name": get_patient_name(PATIENT_ID),
+            "patient_name": patient_name(PATIENT_ID),
             "today": f"{now:%A, %B} {now.day}, {now.year}",
             "now": now.strftime("%I:%M %p").lstrip("0"),
         },

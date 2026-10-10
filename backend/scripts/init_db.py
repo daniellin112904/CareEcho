@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-schema_path = Path(__file__).parent.parent / "app" / "memory" / "schema.sql"
-lines = schema_path.read_text().splitlines()
+schema_dir = Path(__file__).parent.parent / "app" / "memory"
+# schema.sql first: schema_voice.sql (the voice features' tables) adds to its tables
+lines = [line for name in ("schema.sql", "schema_voice.sql") for line in (schema_dir / name).read_text().splitlines()]
 schema = "\n".join(line for line in lines if not line.strip().startswith("--"))
 statements = [s.strip() for s in schema.split(";") if s.strip()]
 

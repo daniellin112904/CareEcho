@@ -1,24 +1,17 @@
 """Family messages: text a family member wrote, spoken once by text to speech in their cloned voice.
 
-Stored as a JSON file plus one MP3 per message under backend/data/ (git-ignored), so the
-audio is generated once and replays work offline. Swap for a database table later.
+The message records go through app/store.py (JSON today, a database table later). The MP3 for
+each is cached here on disk under backend/data/ (git-ignored), so audio is generated once and
+replays work offline.
 """
 
-import json
 import re
-import threading
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-AUDIO_DIR = DATA_DIR / "family_audio"
-INDEX = DATA_DIR / "family_messages.json"
+from app import store
+from app.store import DATA_DIR, PATIENT_ID
 
-# Guards every read and write of INDEX across request threads, so concurrent adds and deletes
-# don't overwrite each other and readers never see a half-written file. Only covers one
-# process: run a single uvicorn worker until this moves to a database.
-_lock = threading.RLock()
+AUDIO_DIR = DATA_DIR / "family_audio"
 
 # Same shape as uuid.uuid4().hex — rejects path separators and ".." before building paths
 _MESSAGE_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -26,29 +19,13 @@ _MESSAGE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 def list_messages() -> list[dict]:
     """Newest first."""
-    with _lock:
-        if not INDEX.exists():
-            return []
-        return json.loads(INDEX.read_text(encoding="utf-8"))
-
-
-def _save(messages: list[dict]):
-    DATA_DIR.mkdir(exist_ok=True)
-    INDEX.write_text(json.dumps(messages, indent=2), encoding="utf-8")
+    return store.list_family_messages(PATIENT_ID)
 
 
 def add_message(from_name: str, voice_id: str, text: str, audio: bytes) -> dict:
+    message = store.add_family_message(from_name, voice_id, text)
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-    message = {
-        "id": uuid.uuid4().hex,
-        "from_name": from_name,
-        "voice_id": voice_id,
-        "text": text,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
     audio_path(message["id"]).write_bytes(audio)
-    with _lock:
-        _save([message, *list_messages()])
     return message
 
 
@@ -57,12 +34,8 @@ def delete_message(message_id: str) -> bool:
         path = audio_path(message_id)
     except ValueError:
         return False
-    with _lock:
-        messages = list_messages()
-        kept = [m for m in messages if m["id"] != message_id]
-        if len(kept) == len(messages):
-            return False
-        _save(kept)
+    if not store.delete_family_message(message_id):
+        return False
     path.unlink(missing_ok=True)
     return True
 

@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
 
-from app.memory import context
+from app import store
 from app.memory.context import NO_MEMORY, build_facts
 from app.memory.events import receipt
 from app.voice.agent import AGENT_CONFIG, CLIENT_TOOLS, DEFAULT_VOICE_ID
@@ -253,12 +253,12 @@ def memory_rule_checks() -> list[Result]:
                 "source": "caregiver_session", "source_quote": None}
 
     def facts_for(memories):
-        real = context.current_memories
-        context.current_memories = lambda topic=None: {"memories": memories}
+        real = store.current_memories
+        store.current_memories = lambda patient_id: memories
         try:
             return build_facts("test")
         finally:
-            context.current_memories = real
+            store.current_memories = real
 
     checks = []
 
