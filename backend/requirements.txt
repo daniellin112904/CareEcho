@@ -6,3 +6,4 @@ psycopg[binary]
 google-genai
 elevenlabs
 httpx
+tzdata

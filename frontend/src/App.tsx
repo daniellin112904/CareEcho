@@ -1,22 +1,22 @@
-import { Link, Navigate, Route, Routes } from "react-router-dom";
-import CaregiverPage from "./pages/caregiver/CaregiverPage";
+import { Navigate, Route, Routes } from "react-router-dom";
 import PatientPage from "./pages/patient/PatientPage";
-import DashboardPage from "./pages/dashboard/DashboardPage";
+import CareLayout from "./pages/care/CareLayout";
+import VoicesPage from "./pages/care/VoicesPage";
+import MemoriesPage from "./pages/care/MemoriesPage";
+import AlertsPage from "./pages/care/AlertsPage";
 
 export default function App() {
   return (
-    <>
-      <nav style={{ display: "flex", gap: 16, padding: 16 }}>
-        <Link to="/caregiver">Caregiver</Link>
-        <Link to="/patient">Patient</Link>
-        <Link to="/dashboard">Dashboard</Link>
-      </nav>
-      <Routes>
-        <Route path="/" element={<Navigate to="/patient" replace />} />
-        <Route path="/caregiver" element={<CaregiverPage />} />
-        <Route path="/patient" element={<PatientPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-      </Routes>
-    </>
+    <Routes>
+      <Route path="/" element={<Navigate to="/patient" replace />} />
+      <Route path="/patient" element={<PatientPage />} />
+      <Route path="/care" element={<CareLayout />}>
+        <Route index element={<Navigate to="voices" replace />} />
+        <Route path="voices" element={<VoicesPage />} />
+        <Route path="memories" element={<MemoriesPage />} />
+        <Route path="alerts" element={<AlertsPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/patient" replace />} />
+    </Routes>
   );
 }

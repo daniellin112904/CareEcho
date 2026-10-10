@@ -1,0 +1,201 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Inter+Tight:wght@300;400&display=swap");
+
+.patient {
+  --p-ink: #0b0b0b;
+  --p-muted: #6b6865;
+  --p-tray: #f3f1ef;
+  --p-hairline: #e3dfdb;
+  --p-heading: "Inter Tight", Inter, system-ui, sans-serif;
+
+  height: 100svh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: clamp(12px, 2.5vh, 28px);
+  padding: clamp(20px, 4vh, 40px) clamp(20px, 5vw, 56px);
+  background: #fdfcfc;
+  color: var(--p-ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.patient :where(p) {
+  margin: 0;
+}
+
+.patient-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.patient-mark {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.patient-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--p-hairline);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.patient-greeting {
+  margin-top: clamp(12px, 3vh, 28px);
+  font-size: clamp(18px, 2.2vw, 22px);
+  color: var(--p-muted);
+}
+
+.patient-day {
+  margin-top: 4px;
+  font-family: var(--p-heading);
+  font-size: clamp(40px, 6.5vw, 72px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+.patient-center {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  container-type: size;
+}
+
+/* Sized from the space left between the date and the card, minus room for the status lines */
+.patient-center .orb {
+  --orb-size: clamp(96px, min(100cqh - 150px, 60cqw), 300px);
+}
+
+.patient-status {
+  margin-top: clamp(16px, 3.5vh, 32px);
+  font-family: var(--p-heading);
+  font-size: clamp(30px, 4.2vw, 42px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.patient-hint {
+  margin-top: 8px;
+  min-height: 1.5em;
+  font-size: clamp(18px, 2.2vw, 22px);
+  color: var(--p-muted);
+}
+
+.patient-caption {
+  margin-top: 10px;
+  max-width: 28ch;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.35;
+  color: var(--p-muted);
+}
+
+.patient-tray {
+  justify-self: center;
+  width: min(100%, 1000px);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 6px;
+  padding: 6px;
+  border-radius: 24px;
+  background: var(--p-tray);
+}
+
+.patient-tray:empty {
+  display: none;
+}
+
+.patient-card {
+  padding: 18px 24px;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.patient-card-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  color: var(--p-muted);
+}
+
+.patient-tag {
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: #faeeda;
+  color: #633806;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.patient-card-title {
+  margin-top: 6px;
+  font-family: var(--p-heading);
+  font-size: clamp(24px, 3.2vw, 32px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.patient-card-detail {
+  margin-top: 6px;
+  font-size: clamp(17px, 2vw, 20px);
+  color: var(--p-muted);
+}
+
+.patient-message {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.patient-message .orb {
+  --orb-size: 64px;
+  cursor: pointer;
+}
+
+.patient-message-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.patient-message-title {
+  font-size: clamp(18px, 2.2vw, 22px);
+  font-weight: 500;
+}
+
+.patient-message .patient-card-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.patient-play {
+  flex-shrink: 0;
+  min-width: 112px;
+  height: 56px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--p-ink);
+  color: #fff;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 18px;
+  font-weight: 500;
+}
