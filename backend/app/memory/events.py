@@ -7,6 +7,7 @@ Replace the bodies of _append/_read with Tiger Data queries and the endpoints st
 
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth import require_staff
-from app.memory.context import PATIENT_ID
+from app.memory.context import PATIENT_ID, is_timestamp, memories_by_id
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 _lock = threading.Lock()
@@ -53,6 +54,7 @@ def _append(table: str, row: dict) -> dict:
 
 
 class Interaction(BaseModel):
+    conversation_id: str | None = Field(default=None, max_length=100)
     topic: str = Field(max_length=100)
     question: str = Field(max_length=1000)
     answer: str = Field(max_length=2000)
@@ -124,4 +126,35 @@ def resolve_alert(alert_id: str):
 
 @staff_router.get("/interactions")
 def list_interactions():
-    return {"interactions": sorted(_read("interactions"), key=lambda r: r["ts"], reverse=True)}
+    """Answers, newest first, each with a receipt: the memories it was based on."""
+    rows = sorted(_read("interactions"), key=lambda r: r["ts"], reverse=True)
+    memories = memories_by_id([i for r in rows for i in r["memory_ids"]])
+    return {"interactions": [{**r, **receipt(r, memories)} for r in rows]}
+
+
+# Words too common to show that an answer used a memory
+_COMMON = {"the", "and", "you", "your", "for", "with", "are", "was", "this", "that", "will", "her", "his", "she"}
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 3 and w not in _COMMON}
+
+
+def receipt(row: dict, memories: dict[str, dict]) -> dict:
+    """Which looked-up memories the answer actually used.
+
+    get_memories returns every current memory, so the IDs logged with an answer are
+    everything the agent saw. A memory counts as a source when its key words (summary and
+    names, like "dentist" or "Anna") appear in the question or answer.
+    """
+    said = _words(f"{row['question']} {row['answer']}")
+    sources = []
+    for memory_id in row["memory_ids"]:
+        m = memories.get(memory_id)
+        if not m:
+            continue
+        values = [v for v in (m.get("details") or {}).values() if isinstance(v, str) and not is_timestamp(v)]
+        if _words(" ".join([m["summary"], *values])) & said:
+            keys = ("id", "summary", "status", "source", "source_quote", "event_at", "confirmed_at")
+            sources.append({k: m.get(k) for k in keys})
+    return {"sources": sources, "checked": len(row["memory_ids"])}

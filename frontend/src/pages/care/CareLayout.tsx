@@ -44,6 +44,7 @@ function StaffShell({ onLock }: { onLock: () => void }) {
         <nav className="care-nav">
           <NavLink to="voices">Family messages</NavLink>
           <NavLink to="memories">Memories</NavLink>
+          <NavLink to="conversations">Conversations</NavLink>
           <NavLink to="alerts">
             Alerts
             {openCount > 0 && (

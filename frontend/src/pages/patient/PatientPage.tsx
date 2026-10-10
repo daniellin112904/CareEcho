@@ -50,6 +50,7 @@ function Companion({ onUrgentAlert }: { onUrgentAlert: (alertId: string) => void
       agentSession.current?.onMessage(role, message);
       if (role === "agent") setCaption(lastSentences(message));
     },
+    onConnect: ({ conversationId }) => agentSession.current?.setConversationId(conversationId),
     onDisconnect: () => agentSession.current?.flush(),
     onError: () => setError("I'm having trouble hearing you. Tap the circle to try again."),
   });

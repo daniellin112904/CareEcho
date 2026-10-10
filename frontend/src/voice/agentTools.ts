@@ -44,6 +44,8 @@ type SessionHooks = {
 
 export function createAgentSession(patientName: string, hooks: SessionHooks) {
   let turn: Turn | null = null;
+  // ElevenLabs' ID for this conversation, so the staff page can group its answers
+  let conversationId: string | null = null;
   // One urgent alert per thing the patient says, whether the agent or the backup raised it.
   // A new symptom later ("my chest hurts too") is a new alert, so staff see it get worse.
   let urgent: Promise<string | null> | null = null;
@@ -73,6 +75,7 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
     }
     if (turn?.lookedUp && turn.answer.length > 0) {
       logInteraction({
+        conversation_id: conversationId,
         topic: turn.topic,
         question: turn.question,
         answer: turn.answer.join(" "),
@@ -146,5 +149,9 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
     },
   };
 
-  return { clientTools, onMessage, flush };
+  function setConversationId(id: string) {
+    conversationId = id;
+  }
+
+  return { clientTools, onMessage, flush, setConversationId };
 }

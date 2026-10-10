@@ -124,6 +124,7 @@ export function logStatement(text: string, kind: StatementKind) {
 }
 
 export function logInteraction(interaction: {
+  conversation_id: string | null;
   topic: string;
   question: string;
   answer: string;
@@ -145,4 +146,34 @@ export function resolveAlert(id: string) {
 
 export function getAlertStatus(id: string) {
   return request<{ resolved: boolean }>(`/alerts/${id}/status`);
+}
+
+// Answer receipts (staff)
+
+export type MemorySource = {
+  id: string;
+  summary: string;
+  status: string;
+  source: string;
+  source_quote: string | null;
+  event_at: string | null;
+  confirmed_at: string | null;
+};
+
+export type Interaction = {
+  id: string;
+  ts: string;
+  conversation_id: string | null;
+  topic: string;
+  question: string;
+  answer: string;
+  answered: boolean;
+  /** The memories the answer used */
+  sources: MemorySource[];
+  /** How many memories the agent looked at */
+  checked: number;
+};
+
+export function listInteractions() {
+  return request<{ interactions: Interaction[] }>("/interactions");
 }

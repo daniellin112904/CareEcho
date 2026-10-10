@@ -13,6 +13,7 @@ MOCK_MEMORIES = [
         "status": "confirmed",
         "source": "caregiver_session",
         "source_quote": "Your dentist appointment is tomorrow at three. Anna will pick you up at two thirty.",
+        "confirmed_at": "2026-10-09T18:12:00-04:00",
     }
 ]
 

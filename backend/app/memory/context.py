@@ -52,6 +52,17 @@ def build_facts(patient_id: str) -> dict:
         ids.append(m["id"])
     return {"facts": "\n".join(lines) or NO_MEMORY, "memory_ids": ids}
 
+
+def memories_by_id(ids: list[str]) -> dict[str, dict]:
+    """The memories an answer was based on, for the staff's answer receipts.
+
+    Placeholder: searches the current list. The real query should also return superseded
+    versions, so a receipt still shows the version that was true when the answer was given.
+    """
+    wanted = set(ids)
+    return {m["id"]: m for m in current_memories()["memories"] if m["id"] in wanted}
+
+
 def spoken_time(iso: str) -> str:
     """'2026-10-10T14:30:00-04:00' -> 'Saturday, October 10 at 2:30 PM', in the patient's timezone."""
     at = datetime.fromisoformat(iso).astimezone(ZoneInfo(os.getenv("TIMEZONE", "America/New_York")))

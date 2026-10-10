@@ -131,11 +131,27 @@ memory teammate are marked *(Memory)*; until they exist, the tool handlers use m
   fall raised an alert before the reply, chest pain raised a second one with "call 911", and "Is
   someone coming?" got an honest "I've told your care team and I'm staying with you".
 
-### M4. Answer receipts (about 1.5 h)
-- [ ] The tool handler remembers which memory IDs the last `get_memories` returned and attaches them to
-      `log_interaction` (so the receipt doesn't rely on the AI passing IDs)
-- [ ] New staff page `/care/conversations`: each question and answer, with a chip for the source
-      memory (the caregiver's quote, who confirmed it, when) or "Not in memory, caregiver asked"
+### M4. Answer receipts ✅ done
+- [x] Each logged answer carries the IDs of the memories looked up during that turn, recorded by the
+      patient page (so the receipt doesn't rely on the AI passing IDs)
+- [x] New staff page `/care/conversations`: each question and answer, with a receipt for the source
+      memory (the caregiver's quote, who said it, when it was confirmed) or "Not in memory, care team asked"
+
+**How it works**
+- **Recording.** While Rose talks, the patient page notes every `get_memories` lookup in the current
+  turn. When the next question starts (or the call ends), it saves the question, the full answer,
+  the memory IDs it looked up, whether the care team was asked, and ElevenLabs' conversation ID.
+- **Picking the real source.** A lookup returns every current memory, so the backend
+  (`receipt()` in `backend/app/memory/events.py`) keeps only the memories whose key words
+  (summary and names, like "dentist" or "Anna") appear in the question or answer. If none do, the
+  receipt says how many memories were checked instead of claiming a source.
+- **The page.** Answers are grouped by conversation, newest first, and refresh every 10 seconds.
+  "Based on: Dentist appointment · Confirmed" opens to the caregiver's exact words, who said them,
+  and when they were confirmed. An answer that went to the care team says so, next to any memory
+  it did use.
+- **For the memory teammate.** `memories_by_id()` in `backend/app/memory/context.py` is a
+  placeholder. The real query should also return superseded versions, so an old receipt still
+  shows the version that was true when the answer was given.
 
 ### M5. First-language mode (about 1 h)
 - [ ] Switch the agent's speech model to `eleven_flash_v2_5` (`eleven_flash_v2` is English only)
