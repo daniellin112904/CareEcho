@@ -1,12 +1,14 @@
-"""Every read and write of the voice features' records, in one place.
+"""Every read and write of the patient's records, in one place.
 
-Today these are JSON files under backend/data/ (git-ignored). To move to Tiger Data, replace
-the body of each function with the SQL in its docstring: the routes, the agent, and the
-frontend only call these functions, so nothing else changes. The tables are in
-app/memory/schema.sql plus app/memory/schema_voice.sql.
+The patient and memories come from Tiger Data (app/db.py), or from the demo memories in
+app/memory/demo.py when DATABASE_URL isn't set. The other records are still JSON files under
+backend/data/ (git-ignored); to move one to Tiger Data, replace its function body with the SQL
+in its docstring. The routes, the agent, and the frontend only call these functions, so
+nothing else changes. The tables are in app/memory/schema.sql plus app/memory/schema_voice.sql.
 
-Rows are plain dicts with the same keys as the table columns. IDs are strings (uuid hex
-today, UUID in Postgres) and times are ISO 8601 strings with a timezone.
+Rows are plain dicts with the same keys as the table columns. IDs are strings and times are
+ISO 8601 strings with a timezone, whatever the storage: callers like build_facts and the
+reminders parse them as strings (see _plain).
 
 Audio (family messages, reminders) isn't stored here: those MP3s are a cache on disk that's
 rebuilt from the text when missing.
@@ -19,7 +21,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.memory.routes import current_memories as _memories_route
+from psycopg.types.json import Jsonb
+
+from app import db
+from app.memory.demo import PATIENT_NAME, demo_memories
 
 PATIENT_ID = "demo"
 
@@ -32,31 +37,116 @@ _lock = threading.RLock()
 # Memories and the patient: owned by the memory system
 
 
+_MEMORY_COLUMNS = ("id, kind, summary, details, event_at, all_day, status, certainty, source, source_quote, "
+                   "session_id, supersedes_id, created_at, confirmed_at")
+# The only statuses ever spoken to the patient (pending, rejected, superseded, and
+# self-reported never are). build_facts in app/memory/context.py checks this again.
+_SPEAKABLE = ["confirmed", "tentative"]
+_demo_rows: list[dict] | None = None
+
+
+def _plain(row: dict) -> dict:
+    """A database row as the rest of the app expects it: UUIDs and times as strings."""
+    return {k: str(v) if isinstance(v, uuid.UUID) else v.isoformat() if isinstance(v, datetime) else v
+            for k, v in row.items()}
+
+
+def _demo() -> list[dict]:
+    """The demo memories when there's no database, timed once per server start so a plan
+    doesn't move from today to tomorrow in the middle of a demo."""
+    global _demo_rows
+    with _lock:
+        if _demo_rows is None:
+            _demo_rows = demo_memories(datetime.now(timezone.utc))
+        return _demo_rows
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def patient_name(patient_id: str) -> str:
-    """SELECT name FROM patients WHERE id = %s  (no patients table yet)"""
-    return "Rose"
+    """The demo name if the patient isn't in the database yet (seed not run), so starting a
+    conversation never fails over a missing name."""
+    if not db.enabled():
+        return PATIENT_NAME
+    with db.pool().connection() as conn:
+        row = conn.execute("SELECT name FROM patients WHERE id = %s", (patient_id,)).fetchone()
+    return row["name"] if row else PATIENT_NAME
 
 
 def current_memories(patient_id: str) -> list[dict]:
-    """What the agent may know. Comes from GET /memories/current in app/memory/routes.py, so
-    replacing that route's mock with the real query updates the agent too.
-
-    Real query: SELECT * FROM memories WHERE patient_id = %s
-                AND status IN ('confirmed', 'tentative', ...) ORDER BY event_at
-    (build_facts in app/memory/context.py still filters status and ended events itself.)
+    """What the agent and the patient screen may know: confirmed and tentative memories,
+    soonest first, then the ones with no time. Events that already happened are still here;
+    build_facts stops telling the agent about them two hours after they start.
     """
-    return _memories_route()["memories"]
+    if not db.enabled():
+        return [m for m in _demo() if m["status"] in _SPEAKABLE]
+    with db.pool().connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE patient_id = %s AND status = ANY(%s) "
+            "ORDER BY event_at NULLS LAST, created_at",
+            (patient_id, _SPEAKABLE),
+        ).fetchall()
+    return [_plain(r) for r in rows]
 
 
 def memories_by_id(ids: list[str]) -> dict[str, dict]:
-    """The memories behind answer receipts, keyed by ID.
+    """The memories behind answer receipts, keyed by ID. Includes superseded and expired
+    versions: a receipt shows the version that was true when the answer was given.
 
-    SELECT * FROM memories WHERE id = ANY(%s)
-    Include superseded and expired versions: a receipt should show the version that was true
-    when the answer was given, not only what's current now.
+    IDs that aren't UUIDs (like "mock-1" in answers logged before the database) are skipped:
+    Postgres would reject the whole query over one of them.
     """
-    wanted = set(ids)
-    return {m["id"]: m for m in current_memories(PATIENT_ID) if m["id"] in wanted}
+    wanted = {i for i in ids if _is_uuid(i)}
+    if not wanted:
+        return {}
+    if not db.enabled():
+        return {m["id"]: m for m in _demo() if m["id"] in wanted}
+    with db.pool().connection() as conn:
+        rows = conn.execute(f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE id = ANY(%s)",
+                            ([uuid.UUID(i) for i in wanted],)).fetchall()
+    return {m["id"]: m for m in map(_plain, rows)}
+
+
+# Caregiver sessions: what a caregiver said, and the memories extracted from it (database only)
+
+
+def add_session(patient_id: str, transcript: str) -> dict:
+    """Saved on its own, before extraction starts, so the caregiver's words are kept even if
+    Gemini fails."""
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            "INSERT INTO sessions (patient_id, transcript) VALUES (%s, %s) RETURNING *", (patient_id, transcript)
+        ).fetchone()
+    return _plain(row)
+
+
+def finish_session(session_id: str, patient_id: str, source: str, extraction: dict,
+                   candidates: list[dict]) -> list[dict]:
+    """Records what extraction did and saves its candidates as pending memories, all in one
+    transaction. Pending memories are never spoken until a caregiver confirms them.
+
+    `candidates` come from app/memory/extraction.py (already validated). Returns the new
+    memory rows, in the same order.
+    """
+    with db.pool().connection() as conn:
+        conn.execute("UPDATE sessions SET extraction = %s WHERE id = %s", (Jsonb(extraction), session_id))
+        rows = [
+            conn.execute(
+                "INSERT INTO memories (patient_id, kind, summary, details, event_at, all_day, status, certainty, "
+                "source, source_quote, session_id, supersedes_id) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s) RETURNING {_MEMORY_COLUMNS}",
+                (patient_id, c["kind"], c["summary"], c["details"] and Jsonb(c["details"]), c["event_at"],
+                 c["all_day"], c["certainty"], source, c["source_quote"], session_id, c["supersedes_id"]),
+            ).fetchone()
+            for c in candidates
+        ]
+    return [_plain(r) for r in rows]
 
 
 # JSON file helpers (delete once everything below is SQL)

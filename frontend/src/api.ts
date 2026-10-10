@@ -7,6 +7,8 @@ export type Memory = {
   summary: string;
   details: Record<string, unknown> | null;
   event_at: string | null;
+  /** A day with no time ("Anna might visit Saturday"): event_at is that day's midnight */
+  all_day?: boolean;
   status: string;
   source: string;
   source_quote: string | null;

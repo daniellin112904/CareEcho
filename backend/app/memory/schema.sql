@@ -1,3 +1,9 @@
+CREATE TABLE IF NOT EXISTS patients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id TEXT NOT NULL,
@@ -58,3 +64,33 @@ CREATE TABLE IF NOT EXISTS alerts (
   message TEXT NOT NULL,
   resolved BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+-- Changes made after the first deploy. Each one works on a new or an existing database and
+-- is safe to run again. Constraints are dropped and re-added because Postgres has no
+-- ADD CONSTRAINT IF NOT EXISTS, and init_db.py splits on ";" so a DO block can't be used.
+
+-- What extraction proposed, so a pending memory remembers whether it was tentative
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS certainty TEXT CHECK (certainty IN ('definite', 'tentative'));
+
+-- Every memory and session belongs to a real patient
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS memories_patient_fk;
+ALTER TABLE memories ADD CONSTRAINT memories_patient_fk FOREIGN KEY (patient_id) REFERENCES patients(id);
+ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_patient_fk;
+ALTER TABLE sessions ADD CONSTRAINT sessions_patient_fk FOREIGN KEY (patient_id) REFERENCES patients(id);
+
+-- Nothing can be spoken without a recorded confirmation
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS memories_confirmed_has_time;
+ALTER TABLE memories ADD CONSTRAINT memories_confirmed_has_time
+  CHECK (status NOT IN ('confirmed', 'tentative') OR confirmed_at IS NOT NULL);
+
+-- A version chain can't fork: each memory is replaced by at most one confirmed version
+-- (several pending proposals for the same memory are still allowed)
+CREATE UNIQUE INDEX IF NOT EXISTS memories_one_successor ON memories (supersedes_id)
+  WHERE status IN ('confirmed', 'tentative', 'superseded');
+
+-- Gemini's raw output for each session, to debug extraction and build the test set
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS extraction JSONB;
+
+-- A plan with a day but no time ("Anna might visit Saturday"). Its event_at is local midnight
+-- of that day, and it's never told with a clock time
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS all_day BOOLEAN NOT NULL DEFAULT false;
