@@ -14,23 +14,24 @@ Built at Hack Knight Fall 2026.
 
 ## Running locally
 
-Backend (copy `backend/.env.example` to `backend/.env` and fill it in first):
+First-time setup (copy `backend/.env.example` to `backend/.env` and fill it in first):
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 .\.venv\Scripts\python scripts\create_agent.py   # first time only, then add ELEVENLABS_AGENT_ID to .env
-.\.venv\Scripts\python -m uvicorn app.main:app --reload
+cd ..
+npm run install:all
 ```
 
-Frontend:
+Then start both servers from the repo root:
 
 ```powershell
-cd frontend
-npm install
 npm run dev
 ```
 
 Open http://localhost:5173/patient for the patient screen and http://localhost:5173/care for staff
-(PIN is `STAFF_PIN` in `backend/.env`).
+(PIN is `STAFF_PIN` in `backend/.env`). Backend API is on http://localhost:8000.
+
+To run only one side: `npm run dev:frontend` or `npm run dev:backend`.
