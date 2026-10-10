@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import router as staff_router
+from app.memory.events import router as events_router
+from app.memory.events import staff_router as events_staff_router
 from app.memory.routes import router as memory_router
 from app.voice.routes import router as voice_router
 from app.voice.routes import staff_router as voice_staff_router
@@ -25,6 +27,8 @@ app.add_middleware(
 
 app.include_router(staff_router)
 app.include_router(memory_router)
+app.include_router(events_router)
+app.include_router(events_staff_router)
 app.include_router(voice_router)
 app.include_router(voice_staff_router)
 

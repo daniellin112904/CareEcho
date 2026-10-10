@@ -26,10 +26,13 @@ Silence:
 - If they say goodbye or that they're done, say a short warm goodbye and use end_call.
 
 What you know:
-Use only the facts below for plans, people, and appointments. If the answer is not here, say you are not sure and that you will ask their care team. Never guess or invent details.
-<facts>
-{{memory_context}}
-</facts>
+- Before answering anything about plans, appointments, people, visits, or what's happening, call get_memories. Do this every time, even for a question you answered a minute ago: plans can change.
+- Answer only from what get_memories returns. Never guess or invent details, and never add promises, feelings, or intentions for family members.
+- If it returns NO_MEMORY or doesn't answer the question, first call ask_caregiver with the question, then tell them you're not sure and that you've asked the care team. Never say you'll ask without calling ask_caregiver.
+- Facts marked TENTATIVE are not certain. Say so, for example "Anna said she might come by Saturday. It isn't certain yet."
+
+Logging:
+- If {{patient_name}} says they did something (took medicine, ate, went for a walk), thank them warmly and call log_patient_statement. Don't repeat it back as a fact.
 
 If asked who you are, say you are Vela, a computer helper who talks with them. Never claim to be a family member or a real person, even if your voice sounds familiar."""
 
@@ -39,7 +42,6 @@ PLACEHOLDERS = {
     "patient_name": "Rose",
     "today": "Saturday, October 10, 2026",
     "now": "9:00 AM",
-    "memory_context": "- Dentist appointment, Saturday, October 10 at 3:00 PM",
 }
 
 # Built-in ElevenLabs tools: hang up after a goodbye, and stay silent instead of filling a pause
@@ -58,11 +60,51 @@ BUILT_IN_TOOLS = {
     },
 }
 
+
+def _client_tool(name: str, description: str, params: dict[str, str]) -> dict:
+    """A tool the agent calls in the browser; handled in frontend/src/voice/agentTools.ts."""
+    return {
+        "type": "client",
+        "name": name,
+        "description": description,
+        "parameters": {
+            "type": "object",
+            "properties": {key: {"type": "string", "description": text} for key, text in params.items()},
+            "required": list(params),
+        },
+        "expects_response": True,
+        "response_timeout_secs": 5,
+    }
+
+
+CLIENT_TOOLS = [
+    _client_tool(
+        "get_memories",
+        "Look up the patient's confirmed plans, appointments, people, and visits. Call before every answer about them.",
+        {"topic": "A few words for what they asked about, like 'pickup time' or 'Anna visit'"},
+    ),
+    _client_tool(
+        "ask_caregiver",
+        "Ask the care team a question you couldn't answer from get_memories. They see it as an alert.",
+        {"question": "The patient's question, in their words"},
+    ),
+    _client_tool(
+        "log_patient_statement",
+        "Record something the patient says they did. It's saved as self-reported, never as a fact.",
+        {
+            "text": "What they said, in their words",
+            "kind": "One of: medication, meal, activity, feeling, other",
+        },
+    ),
+]
+# Questions and answers aren't a tool: the patient page logs them from the transcript,
+# because in testing the agent saved its log calls for the end of the conversation
+
 AGENT_CONFIG = {
     "agent": {
         "first_message": FIRST_MESSAGE,
         "language": "en",
-        "prompt": {"prompt": PROMPT, "temperature": 0.2, "built_in_tools": BUILT_IN_TOOLS},
+        "prompt": {"prompt": PROMPT, "temperature": 0.2, "built_in_tools": BUILT_IN_TOOLS, "tools": CLIENT_TOOLS},
         "dynamic_variables": {"dynamic_variable_placeholders": PLACEHOLDERS},
     },
     "turn": {

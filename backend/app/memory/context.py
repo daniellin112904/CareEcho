@@ -1,12 +1,13 @@
-"""What the voice companion knows about the patient at the start of each conversation.
+"""What the voice companion knows about the patient.
 
-Placeholder until the memory system lands: replace the bodies of these two functions
-and the agent picks up the real data automatically (it's sent as dynamic variables
-in GET /voice/session, see app/voice/routes.py).
+The agent looks facts up live with its get_memories tool (GET /voice/facts, see
+app/voice/routes.py), so a plan confirmed mid-conversation is picked up on the next question.
+Placeholder until the memory system lands: once current_memories() returns real data, the
+agent uses it automatically.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.memory.routes import current_memories
@@ -18,19 +19,38 @@ def get_patient_name(patient_id: str) -> str:
     return "Rose"
 
 
-def build_memory_context(patient_id: str) -> str:
-    """Plain-text facts for the agent prompt. Only confirmed, unexpired memories belong here."""
-    lines = []
+# Tells the agent exactly what to do when nothing matches, so it never fills the gap itself
+NO_MEMORY = "NO_MEMORY: nothing confirmed. Say you are not sure, and call ask_caregiver with the question."
+
+# An event this long past is over and isn't mentioned any more
+EXPIRED_AFTER = timedelta(hours=2)
+
+
+def build_facts(patient_id: str) -> dict:
+    """Spoken-style facts for the agent, plus the IDs of the memories they came from.
+
+    Only confirmed and tentative memories that haven't ended. Every current memory is
+    returned whatever the topic: the list is short, and filtering by the agent's guess at a
+    topic ("leaving") could hide the memory that answers it ("Dentist appointment").
+    """
+    cutoff = datetime.now(timezone.utc) - EXPIRED_AFTER
+    lines, ids = [], []
     for m in current_memories()["memories"]:
+        if m["status"] not in ("confirmed", "tentative"):
+            continue
+        if m.get("event_at") and datetime.fromisoformat(m["event_at"]) < cutoff:
+            continue
         line = m["summary"]
         if m.get("event_at"):
             line += f", {spoken_time(m['event_at'])}"
         # Not source_quote: words like "tomorrow" in it go stale the next day
         for key, value in (m.get("details") or {}).items():
             line += f"; {key.replace('_', ' ')}: {spoken_time(value) if is_timestamp(value) else value}"
+        if m["status"] == "tentative":
+            line += " (TENTATIVE: say it isn't certain yet)"
         lines.append(f"- {line}")
-    return "\n".join(lines) or "- Nothing has been confirmed yet."
-
+        ids.append(m["id"])
+    return {"facts": "\n".join(lines) or NO_MEMORY, "memory_ids": ids}
 
 def spoken_time(iso: str) -> str:
     """'2026-10-10T14:30:00-04:00' -> 'Saturday, October 10 at 2:30 PM', in the patient's timezone."""

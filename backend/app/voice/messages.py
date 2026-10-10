@@ -5,6 +5,7 @@ audio is generated once and replays work offline. Swap for a database table late
 """
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,12 +14,18 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 AUDIO_DIR = DATA_DIR / "family_audio"
 INDEX = DATA_DIR / "family_messages.json"
 
+# Guards every read and write of INDEX across request threads, so concurrent adds and deletes
+# don't overwrite each other and readers never see a half-written file. Only covers one
+# process: run a single uvicorn worker until this moves to a database.
+_lock = threading.RLock()
+
 
 def list_messages() -> list[dict]:
     """Newest first."""
-    if not INDEX.exists():
-        return []
-    return json.loads(INDEX.read_text(encoding="utf-8"))
+    with _lock:
+        if not INDEX.exists():
+            return []
+        return json.loads(INDEX.read_text(encoding="utf-8"))
 
 
 def _save(messages: list[dict]):
@@ -36,16 +43,18 @@ def add_message(from_name: str, voice_id: str, text: str, audio: bytes) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     audio_path(message["id"]).write_bytes(audio)
-    _save([message, *list_messages()])
+    with _lock:
+        _save([message, *list_messages()])
     return message
 
 
 def delete_message(message_id: str) -> bool:
-    messages = list_messages()
-    kept = [m for m in messages if m["id"] != message_id]
-    if len(kept) == len(messages):
-        return False
-    _save(kept)
+    with _lock:
+        messages = list_messages()
+        kept = [m for m in messages if m["id"] != message_id]
+        if len(kept) == len(messages):
+            return False
+        _save(kept)
     audio_path(message_id).unlink(missing_ok=True)
     return True
 

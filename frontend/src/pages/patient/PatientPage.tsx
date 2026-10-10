@@ -8,6 +8,7 @@ import {
   type FamilyMessage,
   type Memory,
 } from "../../api";
+import { createAgentSession } from "../../voice/agentTools";
 import Orb, { type OrbMode } from "../../voice/Orb";
 import "./patient.css";
 
@@ -30,9 +31,14 @@ function Companion() {
   const [starting, setStarting] = useState(false);
   const [caption, setCaption] = useState("");
   const [error, setError] = useState("");
+  const agentSession = useRef<ReturnType<typeof createAgentSession> | null>(null);
 
   const conversation = useConversation({
-    onMessage: ({ role, message }) => role === "agent" && setCaption(lastSentences(message)),
+    onMessage: ({ role, message }) => {
+      agentSession.current?.onMessage(role, message);
+      if (role === "agent") setCaption(lastSentences(message));
+    },
+    onDisconnect: () => agentSession.current?.flush(),
     onError: () => setError("I'm having trouble hearing you. Tap the circle to try again."),
   });
   const { status, isSpeaking, getInputVolume, getOutputVolume, sendContextualUpdate } = conversation;
@@ -57,10 +63,12 @@ function Companion() {
     setStarting(true);
     try {
       const session = await startVoiceSession();
+      agentSession.current = createAgentSession(session.dynamic_variables.patient_name ?? "The patient");
       conversation.startSession({
         conversationToken: session.token,
         connectionType: "webrtc",
         dynamicVariables: session.dynamic_variables,
+        clientTools: agentSession.current.clientTools,
       });
     } catch {
       setError("I can't connect right now. Tap the circle to try again.");

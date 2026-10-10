@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -8,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.auth import require_staff
-from app.memory.context import PATIENT_ID, build_memory_context, get_patient_name
+from app.memory.context import PATIENT_ID, build_facts, get_patient_name
 from app.voice import messages
 from app.voice.agent import DEFAULT_VOICE_ID
 
@@ -20,6 +21,7 @@ eleven = ElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
 # Cloned voices are tagged with this label when staff create them with consent
 CLONE_LABEL = {"app": "vela"}
 _voice_checked = False
+_voice_check_lock = threading.Lock()
 
 
 def agent_id() -> str:
@@ -38,10 +40,15 @@ def ensure_neutral_voice():
     global _voice_checked
     if _voice_checked:
         return
-    tts = eleven.conversational_ai.agents.get(agent_id()).conversation_config.tts
-    if tts.voice_id != DEFAULT_VOICE_ID:
-        eleven.conversational_ai.agents.update(agent_id(), conversation_config={"tts": {"voice_id": DEFAULT_VOICE_ID}})
-    _voice_checked = True
+    with _voice_check_lock:
+        if _voice_checked:
+            return
+        tts = eleven.conversational_ai.agents.get(agent_id()).conversation_config.tts
+        if tts.voice_id != DEFAULT_VOICE_ID:
+            eleven.conversational_ai.agents.update(
+                agent_id(), conversation_config={"tts": {"voice_id": DEFAULT_VOICE_ID}}
+            )
+        _voice_checked = True
 
 
 def family_voices():
@@ -61,9 +68,14 @@ def start_session():
             "patient_name": get_patient_name(PATIENT_ID),
             "today": f"{now:%A, %B} {now.day}, {now.year}",
             "now": now.strftime("%I:%M %p").lstrip("0"),
-            "memory_context": build_memory_context(PATIENT_ID),
         },
     }
+
+
+@router.get("/voice/facts")
+def facts():
+    """What the agent's get_memories tool returns: every current memory, see build_facts."""
+    return build_facts(PATIENT_ID)
 
 
 # Family voices: cloned with consent, used only to read messages family wrote

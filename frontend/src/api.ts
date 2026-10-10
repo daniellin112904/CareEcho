@@ -97,3 +97,48 @@ export function getLatestFamilyMessage() {
 export function familyMessageAudioUrl(id: string) {
   return `${API_URL}/family-messages/${id}/audio`;
 }
+
+// Voice agent tools (patient side, no PIN)
+
+export type AlertKind = "missing_info" | "self_reported_med" | "help_requested";
+export type StatementKind = "medication" | "meal" | "activity" | "feeling" | "other";
+
+export type Alert = {
+  id: string;
+  ts: string;
+  kind: AlertKind;
+  message: string;
+  resolved: boolean;
+};
+
+export function getFacts() {
+  return request<{ facts: string; memory_ids: string[] }>("/voice/facts");
+}
+
+export function raiseAlert(kind: AlertKind, message: string) {
+  return request<Alert>("/alerts", { method: "POST", body: JSON.stringify({ kind, message }) });
+}
+
+export function logStatement(text: string, kind: StatementKind) {
+  return request<unknown>("/patient/statements", { method: "POST", body: JSON.stringify({ text, kind }) });
+}
+
+export function logInteraction(interaction: {
+  topic: string;
+  question: string;
+  answer: string;
+  memory_ids: string[];
+  answered: boolean;
+}) {
+  return request<unknown>("/interactions", { method: "POST", body: JSON.stringify(interaction) });
+}
+
+// Alerts (staff)
+
+export function listAlerts() {
+  return request<{ alerts: Alert[] }>("/alerts");
+}
+
+export function resolveAlert(id: string) {
+  return request<void>(`/alerts/${id}/resolve`, { method: "POST" });
+}
