@@ -93,8 +93,9 @@ type Turn = {
   answer: string[];
   topic: string;
   memoryIds: string[];
-  lookedUp: boolean;
   askedCaregiver: boolean;
+  /** The patient may need help: the staff dashboard counts it as "Asked for help" */
+  urgent: boolean;
 };
 
 /**
@@ -144,7 +145,9 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
         console.warn("Backup alert failed", err),
       );
     }
-    if (turn?.lookedUp && turn.answer.length > 0) {
+    // Every answer is logged, not only ones that looked up a memory: medicine questions and
+    // emergencies matter most on the staff Conversations page and dashboard
+    if (turn && turn.answer.length > 0) {
       logInteraction({
         conversation_id: conversationId,
         topic: turn.topic,
@@ -152,6 +155,7 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
         answer: turn.answer.join(" "),
         memory_ids: turn.memoryIds,
         answered: !turn.askedCaregiver,
+        urgent: turn.urgent,
       }).catch((err) => console.warn("Logging the answer failed", err));
     }
     turn = null;
@@ -163,13 +167,15 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
     if (!text || /^\.+$/.test(text)) return;
     if (role === "user") {
       urgent = null;
+      // The previous turn is finished first, so an emergency is marked on this one
+      flush();
+      turn = { question: text, answer: [], topic: "", memoryIds: [], askedCaregiver: false, urgent: false };
       if (matches(EMERGENCY, text)) {
+        turn.urgent = true;
         raiseUrgent(text).then((id) => {
           if (id) hooks.tellAgent(`The care team has just been alerted that ${patientName} may need help.`);
         });
       }
-      flush();
-      turn = { question: text, answer: [], topic: "", memoryIds: [], lookedUp: false, askedCaregiver: false };
     } else {
       turn?.answer.push(text);
     }
@@ -180,7 +186,6 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
       try {
         const { facts, memory_ids } = await getFacts();
         if (turn) {
-          turn.lookedUp = true;
           turn.topic ||= topic ?? "";
           turn.memoryIds = [...new Set([...turn.memoryIds, ...memory_ids])];
         }
@@ -203,6 +208,7 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
     },
 
     async raise_urgent_alert({ reason }: { reason?: string }) {
+      if (turn) turn.urgent = true;
       const id = await raiseUrgent(reason ?? turn?.question ?? "");
       return id
         ? "The care team has been alerted. Calmly tell them you've told their care team right away."

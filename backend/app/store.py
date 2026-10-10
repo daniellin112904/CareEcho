@@ -1,10 +1,11 @@
 """Every read and write of the patient's records, in one place.
 
-The patient and memories come from Tiger Data (app/db.py), or from the demo memories in
-app/memory/demo.py when DATABASE_URL isn't set. The other records are still JSON files under
-backend/data/ (git-ignored); to move one to Tiger Data, replace its function body with the SQL
-in its docstring. The routes, the agent, and the frontend only call these functions, so
-nothing else changes. The tables are in app/memory/schema.sql plus app/memory/schema_voice.sql.
+Everything is stored in Tiger Data (app/db.py): the patient, memories, caregiver sessions,
+answers (a TimescaleDB hypertable), alerts, family messages, and "Remind now" records. Without
+DATABASE_URL, the demo memories from app/memory/demo.py and JSON files under backend/data/
+(git-ignored) stand in, so a demo still runs offline. The routes, the agent, and the frontend
+only call these functions, so they don't care which. The tables are in app/memory/schema.sql
+plus app/memory/schema_voice.sql.
 
 Rows are plain dicts with the same keys as the table columns. IDs are strings and times are
 ISO 8601 strings with a timezone, whatever the storage: callers like build_facts and the
@@ -18,10 +19,13 @@ import json
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import psycopg
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from app import db
@@ -30,8 +34,8 @@ from app.memory.demo import PATIENT_NAME, demo_memories
 PATIENT_ID = "demo"
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-# One lock for every JSON file: concurrent requests never overwrite each other. Only covers
-# one process, so run a single uvicorn worker until this moves to a database.
+# One lock for every JSON file (only used without a database): concurrent requests never
+# overwrite each other. Only covers one process, so run a single uvicorn worker in that mode.
 _lock = threading.RLock()
 
 
@@ -47,9 +51,13 @@ _demo_rows: list[dict] | None = None
 
 
 def _plain(row: dict) -> dict:
-    """A database row as the rest of the app expects it: UUIDs and times as strings."""
-    return {k: str(v) if isinstance(v, uuid.UUID) else v.isoformat() if isinstance(v, datetime) else v
-            for k, v in row.items()}
+    """A database row as the rest of the app expects it: UUIDs and times as strings (also
+    inside lists, like an answer's memory_ids)."""
+    def plain(v):
+        if isinstance(v, list):
+            return [plain(x) for x in v]
+        return str(v) if isinstance(v, uuid.UUID) else v.isoformat() if isinstance(v, datetime) else v
+    return {k: plain(v) for k, v in row.items()}
 
 
 def _demo() -> list[dict]:
@@ -255,7 +263,7 @@ def _move(patient_id: str, memory_id: str, allowed: list[str], to: str, hints: d
     return _plain(row)
 
 
-# JSON file helpers (delete once everything below is SQL)
+# JSON files: only when there's no database (see the module docstring)
 
 
 def _read(name: str) -> list[dict]:
@@ -283,108 +291,322 @@ def _insert(name: str, row: dict) -> dict:
     return row
 
 
-# Interactions: one row per answer the agent gave
+def _one(sql: str, params) -> dict | None:
+    with db.pool().connection() as conn:
+        row = conn.execute(sql, params).fetchone()
+    return row and _plain(row)
+
+
+def _all(sql: str, params) -> list[dict]:
+    with db.pool().connection() as conn:
+        return [_plain(r) for r in conn.execute(sql, params).fetchall()]
+
+
+# Interactions: one row per answer the agent gave. A TimescaleDB hypertable: the hourly
+# repetition counts on the dashboard (the questions_hourly continuous aggregate) come from it
+
+
+_INTERACTION_COLUMNS = "id, ts, patient_id, conversation_id, topic, question, answer, memory_ids, answered, latency_ms"
 
 
 def add_interaction(conversation_id: str | None, topic: str, question: str, answer: str,
                     memory_ids: list[str], answered: bool, latency_ms: int | None = None) -> dict:
-    """INSERT INTO interactions (ts, patient_id, conversation_id, topic, question, answer,
-           memory_ids, answered, latency_ms)
-       VALUES (now(), %s, %s, %s, %s, %s, %s::uuid[], %s, %s) RETURNING *
-    """
-    row = _new_row(conversation_id=conversation_id, topic=topic, question=question, answer=answer,
-                   memory_ids=memory_ids, answered=answered, latency_ms=latency_ms)
-    return _insert("interactions", row)
+    """IDs that aren't UUIDs (like "mock-1" from before the database) are left out of
+    memory_ids: the column is UUID[], and receipts skip them anyway."""
+    memory_ids = [i for i in memory_ids if _is_uuid(i)]
+    if not db.enabled():
+        return _insert("interactions", _new_row(conversation_id=conversation_id, topic=topic, question=question,
+                                                answer=answer, memory_ids=memory_ids, answered=answered,
+                                                latency_ms=latency_ms))
+    return _one(
+        "INSERT INTO interactions (patient_id, conversation_id, topic, question, answer, memory_ids, answered, latency_ms) "
+        f"VALUES (%s, %s, %s, %s, %s, %s::uuid[], %s, %s) RETURNING {_INTERACTION_COLUMNS}",
+        (PATIENT_ID, conversation_id, topic, question, answer, memory_ids, answered, latency_ms))
 
 
 def list_interactions(patient_id: str) -> list[dict]:
-    """SELECT * FROM interactions WHERE patient_id = %s ORDER BY ts DESC LIMIT 500"""
-    rows = [r for r in _read("interactions") if r["patient_id"] == patient_id]
-    return sorted(rows, key=lambda r: r["ts"], reverse=True)
+    """Newest first, at most 500."""
+    if not db.enabled():
+        rows = [r for r in _read("interactions") if r["patient_id"] == patient_id]
+        return sorted(rows, key=lambda r: r["ts"], reverse=True)[:500]
+    return _all(f"SELECT {_INTERACTION_COLUMNS} FROM interactions WHERE patient_id = %s ORDER BY ts DESC LIMIT 500",
+                (patient_id,))
 
 
-# Things the patient said they did ("I took my pills"): never facts
+# Things the patient said they did ("I took my pills"): memories with status self_reported and
+# source patient, which are never spoken and never count as facts
 
 
 def add_statement(text: str, kind: str) -> dict:
-    """In the schema these are memories the patient reported:
-       INSERT INTO memories (patient_id, kind, summary, status, source, source_quote)
-       VALUES (%s, %s, %s, 'self_reported', 'patient', %s) RETURNING *
-    """
-    return _insert("statements", _new_row(text=text, kind=kind, status="self_reported"))
+    """Returns {id, ts, text, kind, status}, the same with or without the database."""
+    if not db.enabled():
+        return _insert("statements", _new_row(text=text, kind=kind, status="self_reported"))
+    return _one(
+        "INSERT INTO memories (patient_id, kind, summary, status, source, source_quote) "
+        "VALUES (%s, %s, %s, 'self_reported', 'patient', %s) "
+        "RETURNING id, created_at AS ts, summary AS text, kind, status",
+        (PATIENT_ID, kind, text, text))
 
 
-# Alerts for the care team
+def list_statements(patient_id: str, since: datetime) -> list[dict]:
+    """What the patient said they did since then, newest first."""
+    if not db.enabled():
+        rows = [r for r in _read("statements")
+                if r["patient_id"] == patient_id and datetime.fromisoformat(r["ts"]) >= since]
+        return sorted(rows, key=lambda r: r["ts"], reverse=True)
+    return _all("SELECT id, created_at AS ts, summary AS text, kind, status FROM memories "
+                "WHERE patient_id = %s AND status = 'self_reported' AND created_at >= %s ORDER BY created_at DESC",
+                (patient_id, since))
+
+
+# Alerts for the care team. IDs come from the patient screen's URL too, so anything that isn't
+# a UUID is "not found" before it reaches Postgres (which would refuse it with an error)
+
+
+_ALERT_COLUMNS = "id, ts, patient_id, kind, message, resolved"
 
 
 def add_alert(kind: str, message: str) -> dict:
-    """INSERT INTO alerts (patient_id, kind, message) VALUES (%s, %s, %s) RETURNING *"""
-    return _insert("alerts", _new_row(kind=kind, message=message, resolved=False))
+    if not db.enabled():
+        return _insert("alerts", _new_row(kind=kind, message=message, resolved=False))
+    return _one(f"INSERT INTO alerts (patient_id, kind, message) VALUES (%s, %s, %s) RETURNING {_ALERT_COLUMNS}",
+                (PATIENT_ID, kind, message))
 
 
 def get_alert(alert_id: str) -> dict | None:
-    """SELECT * FROM alerts WHERE id = %s"""
-    return next((a for a in _read("alerts") if a["id"] == alert_id), None)
+    if not _is_uuid(alert_id):
+        return None
+    if not db.enabled():
+        return next((a for a in _read("alerts") if a["id"] == alert_id), None)
+    return _one(f"SELECT {_ALERT_COLUMNS} FROM alerts WHERE id = %s", (alert_id,))
 
 
 def list_alerts(patient_id: str) -> list[dict]:
-    """SELECT * FROM alerts WHERE patient_id = %s ORDER BY resolved, ts DESC"""
-    rows = sorted((a for a in _read("alerts") if a["patient_id"] == patient_id), key=lambda a: a["ts"], reverse=True)
-    return sorted(rows, key=lambda a: a["resolved"])
+    """Open alerts first, newest first within each group (at most 200: open ones always fit)."""
+    if not db.enabled():
+        rows = sorted((a for a in _read("alerts") if a["patient_id"] == patient_id),
+                      key=lambda a: a["ts"], reverse=True)
+        return sorted(rows, key=lambda a: a["resolved"])[:200]
+    return _all(f"SELECT {_ALERT_COLUMNS} FROM alerts WHERE patient_id = %s ORDER BY resolved, ts DESC LIMIT 200",
+                (patient_id,))
 
 
 def resolve_alert(alert_id: str) -> bool:
-    """UPDATE alerts SET resolved = true WHERE id = %s  (returns whether a row matched)"""
-    with _lock:
-        rows = _read("alerts")
-        match = next((a for a in rows if a["id"] == alert_id), None)
-        if match:
-            match["resolved"] = True
-            _write("alerts", rows)
-    return match is not None
+    """Whether an alert with that ID exists (it's resolved now either way)."""
+    if not _is_uuid(alert_id):
+        return False
+    if not db.enabled():
+        with _lock:
+            rows = _read("alerts")
+            match = next((a for a in rows if a["id"] == alert_id), None)
+            if match:
+                match["resolved"] = True
+                _write("alerts", rows)
+        return match is not None
+    return _one("UPDATE alerts SET resolved = true WHERE id = %s RETURNING id", (alert_id,)) is not None
 
 
-# Family messages (the MP3 for each is cached on disk by app/voice/messages.py)
+# Family messages (the MP3 for each is cached on disk by app/voice/messages.py, named by the
+# message ID's 32 hex digits, so it doesn't matter whether the ID is written with dashes)
+
+
+_MESSAGE_COLUMNS = "id, patient_id, from_name, voice_id, text, created_at"
 
 
 def add_family_message(from_name: str, voice_id: str, text: str) -> dict:
-    """INSERT INTO family_messages (patient_id, from_name, voice_id, text)
-       VALUES (%s, %s, %s, %s) RETURNING *
-    """
-    row = {"id": uuid.uuid4().hex, "patient_id": PATIENT_ID, "from_name": from_name, "voice_id": voice_id,
-           "text": text, "created_at": datetime.now(timezone.utc).isoformat()}
-    return _insert("family_messages", row)
+    if not db.enabled():
+        row = {"id": uuid.uuid4().hex, "patient_id": PATIENT_ID, "from_name": from_name, "voice_id": voice_id,
+               "text": text, "created_at": datetime.now(timezone.utc).isoformat()}
+        return _insert("family_messages", row)
+    return _one("INSERT INTO family_messages (patient_id, from_name, voice_id, text) VALUES (%s, %s, %s, %s) "
+                f"RETURNING {_MESSAGE_COLUMNS}", (PATIENT_ID, from_name, voice_id, text))
 
 
 def list_family_messages(patient_id: str) -> list[dict]:
-    """SELECT * FROM family_messages WHERE patient_id = %s ORDER BY created_at DESC"""
-    rows = [m for m in _read("family_messages") if m.get("patient_id", PATIENT_ID) == patient_id]
-    return sorted(rows, key=lambda m: m["created_at"], reverse=True)
+    """Newest first."""
+    if not db.enabled():
+        rows = [m for m in _read("family_messages") if m.get("patient_id", PATIENT_ID) == patient_id]
+        return sorted(rows, key=lambda m: m["created_at"], reverse=True)
+    return _all(f"SELECT {_MESSAGE_COLUMNS} FROM family_messages WHERE patient_id = %s ORDER BY created_at DESC",
+                (patient_id,))
 
 
 def delete_family_message(message_id: str) -> dict | None:
-    """DELETE FROM family_messages WHERE id = %s RETURNING *"""
-    with _lock:
-        rows = _read("family_messages")
-        match = next((m for m in rows if m["id"] == message_id), None)
-        if match:
-            _write("family_messages", [m for m in rows if m["id"] != message_id])
-    return match
+    if not _is_uuid(message_id):
+        return None
+    if not db.enabled():
+        with _lock:
+            rows = _read("family_messages")
+            match = next((m for m in rows if m["id"] == message_id), None)
+            if match:
+                _write("family_messages", [m for m in rows if m["id"] != message_id])
+        return match
+    return _one(f"DELETE FROM family_messages WHERE id = %s RETURNING {_MESSAGE_COLUMNS}", (message_id,))
 
 
 # Reminders staff sent with "Remind now" (scheduled ones are computed from memories)
 
 
 def add_sent_reminder(memory_id: str) -> dict:
-    """INSERT INTO reminders_sent (id, patient_id, memory_id) VALUES (%s, %s, %s) RETURNING *"""
-    row = {"id": f"{memory_id}-now-{uuid.uuid4().hex[:8]}", "patient_id": PATIENT_ID, "memory_id": memory_id,
-           "at": datetime.now(timezone.utc).isoformat()}
-    with _lock:
-        _write("reminders_now", [*_read("reminders_now")[-20:], row])
-    return row
+    reminder_id = f"{memory_id}-now-{uuid.uuid4().hex[:8]}"
+    if not db.enabled():
+        row = {"id": reminder_id, "patient_id": PATIENT_ID, "memory_id": memory_id,
+               "at": datetime.now(timezone.utc).isoformat()}
+        with _lock:
+            _write("reminders_now", [*_read("reminders_now")[-20:], row])
+        return row
+    return _one("INSERT INTO reminders_sent (id, patient_id, memory_id) VALUES (%s, %s, %s) "
+                "RETURNING id, patient_id, memory_id, at", (reminder_id, PATIENT_ID, memory_id))
 
 
 def recent_sent_reminders(patient_id: str, since: datetime) -> list[dict]:
-    """SELECT * FROM reminders_sent WHERE patient_id = %s AND at >= %s ORDER BY at"""
-    return [r for r in _read("reminders_now")
-            if r.get("patient_id", PATIENT_ID) == patient_id and datetime.fromisoformat(r["at"]) >= since]
+    if not db.enabled():
+        return [r for r in _read("reminders_now")
+                if r.get("patient_id", PATIENT_ID) == patient_id and datetime.fromisoformat(r["at"]) >= since]
+    return _all("SELECT id, patient_id, memory_id, at FROM reminders_sent WHERE patient_id = %s AND at >= %s "
+                "ORDER BY at", (patient_id, since))
+
+
+# History: every version of a memory (database only)
+
+
+# Statuses of a version that was the current one at some point (pending and rejected
+# proposals never were, so they aren't versions)
+_VERSION_STATUSES = ["confirmed", "tentative", "superseded", "cancelled"]
+
+
+def memory_history(patient_id: str, memory_id: str) -> list[dict] | None:
+    """Oldest first: the versions it replaced, itself, then the versions that replaced it.
+    None if the memory doesn't exist. For a pending proposal, the history of the memory it
+    would change, ending with the proposal."""
+    with db.pool().connection() as conn:
+        def find(where: str, value):
+            return conn.execute(f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE {where} AND patient_id = %s",
+                                (value, patient_id)).fetchone()
+
+        start = find("id = %s", memory_id)
+        if start is None:
+            return None
+        older, row = [], start
+        while row["supersedes_id"] and len(older) < 50 and (row := find("id = %s", row["supersedes_id"])):
+            older.append(row)
+        newer, row = [], start
+        while len(newer) < 50 and (row := conn.execute(
+                f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE supersedes_id = %s AND patient_id = %s "
+                "AND status = ANY(%s)", (row["id"], patient_id, _VERSION_STATUSES)).fetchone()):
+            newer.append(row)
+    return [_plain(r) for r in [*reversed(older), start, *newer]]
+
+
+# The care team's dashboard
+
+
+_ALERT_KINDS = ("help_requested", "missing_info", "self_reported_med")
+
+
+def dashboard(patient_id: str, now: datetime) -> dict:
+    """What the patient keeps asking about today and over the last 24 hours, open alerts by
+    kind, and what the patient said they did today. Days are the patient's (TIMEZONE).
+
+    The question counts come from questions_hourly, a TimescaleDB continuous aggregate over the
+    interactions hypertable (schema.sql). It's real-time (materialized_only = false), so an
+    answer logged a moment ago is already counted.
+    """
+    tz = ZoneInfo(os.getenv("TIMEZONE", "America/New_York"))
+    local = now.astimezone(tz)
+    today = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    this_hour = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    hours = [this_hour - timedelta(hours=n) for n in range(23, -1, -1)]
+
+    if db.enabled():
+        with db.pool().connection() as conn:
+            by_topic = [(r["topic"], r["asks"]) for r in conn.execute(
+                "SELECT topic, sum(asks)::int AS asks FROM questions_hourly WHERE patient_id = %s AND hour >= %s "
+                "GROUP BY topic ORDER BY asks DESC, topic", (patient_id, today)).fetchall()]
+            per_hour = {r["hour"]: r["asks"] for r in conn.execute(
+                "SELECT hour, sum(asks)::int AS asks FROM questions_hourly WHERE patient_id = %s AND hour >= %s "
+                "GROUP BY hour", (patient_id, hours[0])).fetchall()}
+            open_alerts = {r["kind"]: r["n"] for r in conn.execute(
+                "SELECT kind, count(*)::int AS n FROM alerts WHERE patient_id = %s AND NOT resolved GROUP BY kind",
+                (patient_id,)).fetchall()}
+    else:
+        asked = [(datetime.fromisoformat(r["ts"]), r["topic"]) for r in list_interactions(patient_id)]
+        by_topic = Counter(topic for ts, topic in asked if ts >= today).most_common()
+        per_hour = Counter(ts.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+                           for ts, _ in asked if ts >= hours[0])
+        open_alerts = Counter(a["kind"] for a in list_alerts(patient_id) if not a["resolved"])
+
+    return {
+        "day": local.date().isoformat(),
+        "asks_today": sum(n for _, n in by_topic),
+        "by_topic": [{"topic": topic or "Other", "asks": n} for topic, n in by_topic],
+        "by_hour": [{"hour": h.isoformat(), "asks": per_hour.get(h, 0)} for h in hours],
+        "open_alerts": {kind: open_alerts.get(kind, 0) for kind in _ALERT_KINDS},
+        "self_reported_today": list_statements(patient_id, today),
+    }
+
+
+# Demo reset
+
+
+_SEED_COLUMNS = ("id", "kind", "summary", "details", "event_at", "all_day", "status", "certainty", "source",
+                 "source_quote", "supersedes_id", "created_at", "confirmed_at")
+
+
+def reset_demo(patient_id: str, name: str, memories: list[dict]) -> dict:
+    """Puts the demo patient back to a known state: their name, these memories, and no caregiver
+    sessions, answers, alerts, or "Remind now" records. One transaction.
+
+    Family messages are kept: each needs a consented voice and text to speech to make again.
+    Without a database, the demo memories are re-timed from now and the JSON records cleared.
+    Returns how many of each were removed.
+    """
+    global _demo_rows
+    if not db.enabled():
+        removed = {}
+        with _lock:
+            _demo_rows = None
+            for table in ("interactions", "statements", "alerts", "reminders_now"):
+                rows = _read(table)
+                kept = [r for r in rows if r.get("patient_id", PATIENT_ID) != patient_id]
+                removed[table] = len(rows) - len(kept)
+                _write(table, kept)
+        return {"memories": len(_demo()), "removed": removed}
+
+    with db.pool().connection() as conn:
+        conn.execute("INSERT INTO patients (id, name) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+                     (patient_id, name))
+        # In this order: "Remind now" records point at memories, and memories at sessions
+        removed = {table: conn.execute(f"DELETE FROM {table} WHERE patient_id = %s", (patient_id,)).rowcount
+                   for table in ("reminders_sent", "interactions", "alerts", "memories", "sessions")}
+        # In list order: a newer version comes after the one it supersedes
+        for m in memories:
+            values = {**m, "details": m["details"] and Jsonb(m["details"])}
+            conn.execute(f"INSERT INTO memories (patient_id, {', '.join(_SEED_COLUMNS)}) "
+                         f"VALUES (%s, {', '.join(['%s'] * len(_SEED_COLUMNS))})",
+                         [patient_id, *(values[c] for c in _SEED_COLUMNS)])
+    _refresh_question_counts()
+    return {"memories": len(memories), "removed": removed}
+
+
+def _refresh_question_counts():
+    """Recounts the stored hourly totals right away, so deleted answers leave the dashboard now
+    rather than at the next scheduled refresh.
+
+    Complete hours only: the window ends at the start of the current hour. Recounting the hour
+    in progress would store a total for it and move the aggregate's real-time boundary (its
+    watermark) past it, and answers logged later in that hour wouldn't show until it ended.
+
+    TimescaleDB refuses this inside a transaction, so this one statement runs in autocommit,
+    which is switched back off before the connection goes back to the pool (everything else
+    relies on transactions).
+    """
+    this_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    with db.pool().connection() as conn:
+        conn.autocommit = True
+        try:
+            conn.execute(sql.SQL("CALL refresh_continuous_aggregate('questions_hourly', NULL, {})")
+                         .format(sql.Literal(this_hour)))
+        finally:
+            conn.autocommit = False
+

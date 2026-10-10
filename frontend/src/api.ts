@@ -192,6 +192,8 @@ export function logInteraction(interaction: {
   answer: string;
   memory_ids: string[];
   answered: boolean;
+  /** The patient may need help (counted as "Asked for help" on the dashboard) */
+  urgent?: boolean;
 }) {
   return request<unknown>("/interactions", { method: "POST", body: JSON.stringify(interaction) });
 }

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app import db, store
 from app.auth import require_staff
 from app.memory import extraction
+from app.memory.demo import PATIENT_NAME, demo_memories
 from app.store import PATIENT_ID
 
 router = APIRouter(tags=["memory"])
@@ -133,3 +134,23 @@ def reject_memory(memory_id: UUID):
 def cancel_memory(memory_id: UUID):
     """A current plan was cancelled. It's kept for receipts of past answers, never spoken again."""
     return _review(store.cancel_memory, memory_id)
+
+
+@staff_router.get("/memories/{memory_id}/history")
+def memory_history(memory_id: UUID):
+    """Every version of a memory, oldest first, so the caregiver can see what changed and when:
+    the versions it replaced, itself, and the versions that replaced it."""
+    _needs_database()
+    versions = store.memory_history(PATIENT_ID, str(memory_id))
+    if versions is None:
+        raise HTTPException(404, "That memory doesn't exist")
+    return {"versions": versions}
+
+
+@staff_router.post("/demo/reset")
+def reset_demo():
+    """Back to a known demo: Rose's memories timed from now, and no caregiver sessions, answers,
+    alerts, or "Remind now" records. Family messages are kept. The database is shared, so this
+    resets it for everyone: ask before pressing it."""
+    return store.reset_demo(PATIENT_ID, PATIENT_NAME, demo_memories(datetime.now(timezone.utc)))
+

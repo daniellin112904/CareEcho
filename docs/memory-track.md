@@ -9,10 +9,15 @@ of the code. Read this before touching `backend/app/store.py`, `backend/app/db.p
 - The agent, the patient screen, and the reminders read memories from Tiger Data.
 - `POST /sessions/transcript` turns what a caregiver says into **pending** memories with Gemini.
 - Staff can confirm, reject, or cancel memories through the API.
+- **Everything is in Tiger Data now:** answers (in the `interactions` hypertable), alerts,
+  patient self-reports, family messages, and "Remind now" records. JSON files are only the
+  offline fallback.
+- `GET /dashboard` reads the hourly TimescaleDB aggregate. Memory history and `POST /demo/reset`
+  are done too.
 
-The staff cards that use that API belong to the Interface owner; see "API for the Interface owner"
-below. Until they exist, review happens through the API, and nothing extracted is spoken before a
-person confirms it.
+The staff screens that use these APIs (review cards, dashboard, reset button) belong to the
+Interface owner; see "API for the Interface owner" below. Until they exist, everything works
+through the API, and nothing extracted is spoken before a person confirms it.
 
 | Step | What | State |
 |---|---|---|
@@ -21,6 +26,7 @@ person confirms it.
 | 3 | The store reads memories from Tiger Data | done |
 | 4 | `POST /sessions/transcript`: Gemini extraction into pending memories | done |
 | 5 | Review: confirm, reject, cancel. API by Memory, staff cards by Interface | API done |
+| 6 | Tiger Data showcase: all records in Tiger Data, `GET /dashboard`, history, demo reset | API done |
 
 ## Quick start
 
@@ -33,6 +39,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python scripts/seed_demo.py           # before every demo: resets Rose's memories
 .venv/bin/python scripts/extraction_tests.py --offline   # free checks of the extraction code
 .venv/bin/python scripts/review_tests.py        # confirm, reject, cancel against the database (own test patient)
+.venv/bin/python scripts/records_tests.py       # answers, alerts, dashboard, history, reset (own test patient)
 .venv/bin/python -m uvicorn app.main:app --reload
 ```
 
@@ -73,6 +80,13 @@ in `backend/.env` and restart. See decision 16.
 | `backend/app/memory/schema.sql` | **Step 5:** the `cancelled` status (decision 39) |
 | `frontend/src/api.ts` | **Step 5:** typed client functions for the review API (decision 45) |
 | `backend/scripts/review_tests.py` | **New (step 5).** 36 checks against the database (decision 46) |
+| `backend/app/store.py` | **Step 6:** answers, alerts, self-reports, family messages, and "Remind now" records in Tiger Data (JSON only offline); `dashboard`, `memory_history`, `reset_demo` (decisions 47 to 56) |
+| `backend/app/memory/events.py` | **Step 6:** answer topics set by code; `GET /dashboard` (decisions 51, 53) |
+| `backend/app/memory/routes.py` | **Step 6:** `GET /memories/{id}/history`, `POST /demo/reset` (decisions 55, 56) |
+| `backend/scripts/seed_demo.py` | **Step 6:** now the same reset as `POST /demo/reset` (decision 56) |
+| `backend/app/voice/messages.py` | **Step 6:** audio files named by the UUID's hex digits (decision 50; voice-owned, part of the approved fixes) |
+| `frontend/src/voice/agentTools.ts`, `frontend/src/api.ts` | **Step 6:** every answer is logged, emergencies marked (decision 52; voice owner approved) |
+| `backend/scripts/records_tests.py` | **New (step 6).** 36 checks against the database and offline (decision 57) |
 | `backend/scripts/safety_tests.py` | **Step 5:** `cancelled` added to the never-spoken memory-rule check |
 
 ## Decisions
@@ -603,6 +617,154 @@ certainty is the only thing staff change before confirming, and a new `cancelled
   - another patient's memory staying untouched;
   - the endpoints' 200, 401, 404, 409, and 422 answers.
 
+### Step 6: Tiger Data showcase (records, dashboard, history, demo reset)
+
+Agreed with the team lead: move the event records to Tiger Data with the fixes found while looking
+into it, then the dashboard, history, and demo reset. The voice owner approved logging every
+answer (decision 52).
+
+**47. Every record is in Tiger Data; JSON files are only the offline fallback.**
+- *What moved:* answers (the `interactions` hypertable), alerts, patient self-reports, family
+  messages, and "Remind now" records. The tables were already there from `schema_voice.sql`.
+- *How:* each function in `store.py` has a database branch and the old JSON branch, picked by
+  `DATABASE_URL`, like memories (decision 16).
+- *Implications:*
+  - JSON records from before aren't copied over. They were only ever on each person's laptop.
+  - The offline mode keeps working end to end; `records_tests.py` checks it.
+
+**48. Patient self-reports are memories** with status `self_reported` and source `patient`, as
+Plan.md intended.
+- *Why:* one place for everything about the patient. The rules that keep them from being spoken
+  already exist: only confirmed and tentative memories are told to the agent.
+- *Implications:* the demo reset removes them with the other memories. The dashboard lists today's.
+
+**49. IDs from outside are checked before they reach Postgres.**
+- Alert status and resolve, and family-message delete: an ID that isn't a UUID is "not found"
+  (404), not a database error (500).
+- An answer's `memory_ids`: only UUIDs are kept (the column is `UUID[]`; old answers had
+  `mock-1`), and at most 50.
+
+**50. Family-message audio files are named by the UUID's 32 hex digits.**
+- *Why:* `messages.py` only accepted hex IDs (its protection against path tricks), and database IDs
+  have dashes, so every audio link would have been a 404.
+- *How:* `audio_path()` parses the ID as a UUID and uses its hex digits. Both forms open the same
+  file, and anything that isn't a UUID is still refused before a path is built.
+- *Implications:* this is a small change in a voice-owned file, as part of the fixes the team lead
+  approved.
+
+**51. Each answer's topic is set by code, not by the AI.**
+- *Why:* the dashboard counts repeated questions by topic. The agent's own words for the same
+  question vary ("pickup time", "leaving", "Anna"), which would split one question into many rows.
+- *The rule, in order:*
+  1. "Asked for help" for an emergency;
+  2. "Asked the care team" when the answer was to ask them;
+  3. the memory the answer used, from the receipt word matching (`receipt()` in
+     `backend/app/memory/events.py`), like "Dentist appointment";
+  4. otherwise the agent's topic, or "Other".
+- *Implications:* counts are only as good as the receipt matching. Two memories naming the same
+  person can claim each other's questions (the demo avoids that, decision 22).
+
+**52. Every answer is logged, and emergencies are marked** (`agentTools.ts`, voice owner approved).
+- *Before:* only turns where the agent looked up a memory were logged, so medicine questions and
+  emergencies, the ones staff most need to see, never reached the table.
+- *Now:*
+  - every turn with an answer is logged, with `urgent: true` when an alert went out;
+  - the emergency check runs after the previous turn is closed, so the right turn is marked.
+- *Implications:* the Conversations page now also shows answers that used no memory. Their receipt
+  reads "Checked 0 memories, none named in the answer", which the Interface owner may want to
+  reword.
+
+**53. `GET /dashboard`** (staff only): the hourly TimescaleDB aggregate, read for the care team.
+- *Returns:*
+  - today's questions by topic;
+  - the last 24 hours, every hour (zeros included, so a chart needs no gap-filling);
+  - open alerts by kind;
+  - today's self-reports.
+- *Where the counts come from:* `questions_hourly` (a continuous aggregate over the hypertable) is
+  real-time (`materialized_only = false`). Hours already counted are read from stored totals, and
+  the hour in progress is counted from the raw answers, so an answer appears at once.
+- *Implications:*
+  - "Today" is the patient's day (`TIMEZONE`).
+  - Offline, the same response is computed from the JSON records.
+
+**54. A recount only ever covers complete hours.**
+- *The bug, found by the records tests:* the first version recounted with an open-ended window
+  (`NULL, NULL`). That also stored a total for the hour in progress and moved the aggregate's
+  real-time boundary (its *watermark*) past it, so answers logged later that hour stopped showing
+  until the hour ended.
+- *The fix:* `_refresh_question_counts()` ends its window at the start of the current hour.
+- *Effect on the shared database:* the watermark never moves backwards, so its 21:00–22:00 UTC hour
+  on October 10 stayed frozen until 22:00 UTC, then fixed itself.
+- *Implications:* never call `refresh_continuous_aggregate` with an open end. A named test checks
+  that an answer logged right after a reset counts at once.
+
+**55. `GET /memories/{id}/history`** (staff only): every version of a memory, oldest first.
+- *What counts as a version:* one that was current at some point (confirmed, tentative,
+  superseded, or cancelled). Pending and rejected proposals aren't versions.
+- *Asking from the middle of a chain* gives the whole chain. A pending proposal gives the memory it
+  would change, ending with the proposal.
+- *Why:* Plan.md's rule that "the caregiver sees the history".
+- *Implications:* this backs a "what changed" view, and lets receipts show the version that was
+  true when a past answer was given.
+
+**56. `POST /demo/reset`** (staff only), and `seed_demo.py` does the same.
+- *What it does:*
+  - puts back Rose's memories, timed from now;
+  - removes her caregiver sessions, answers, alerts, self-reports, and "Remind now" records;
+  - **keeps family messages**, because each needs a consented voice and text to speech to make
+    again.
+- *How:* one transaction, then a recount of the complete hours (decision 54), so old answers leave
+  the dashboard at once.
+- *Implications:*
+  - The database is shared, so this resets the demo for everyone. The UI should ask first.
+  - Offline, it re-times the demo memories and clears the JSON records.
+
+**57. Tests: `backend/scripts/records_tests.py`** (36 checks, real database, then offline).
+- *Isolation:* its own `test-records` patient, deleted at the end; the demo is never touched. No
+  Gemini or ElevenLabs calls.
+- *What it covers:*
+  - answers and their topics;
+  - self-reports, alerts, family messages (both ID forms, path safety, delete), and "Remind now";
+  - the dashboard;
+  - history from both ends of a chain;
+  - the reset;
+  - the same basics offline.
+- *Proof that the recount matters:* the suite stores totals for answers two hours old, and requires
+  the reset to clear them. With the reset's recount switched off as a test, exactly that check
+  failed.
+
+## Snowflake life story: roadblocks
+
+The team lead wants Rose's life story stored in Snowflake, with Cortex Search over it. Nothing on
+our side blocks it; these steps outside the code do, in this order:
+
+1. **The access token is refused** (`401: Network policy is required`). By default, Snowflake only
+   accepts these tokens from a user covered by a network policy, which is an IP allowlist.
+   **Fix:** the account admin runs this once in Snowsight (an authentication policy lives in a
+   schema, so create the database and schema first):
+   ```sql
+   CREATE AUTHENTICATION POLICY vela_pat_policy
+     PAT_POLICY = (NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED);
+   ALTER USER <the_vela_user> SET AUTHENTICATION POLICY vela_pat_policy;
+   ```
+   An IP allowlist would also work, but breaks whenever the venue Wi-Fi's IP changes.
+2. **Nothing exists in Snowflake yet.** A one-time setup script creates the database, schema,
+   life-story table (one short passage per row), the Cortex Search service, and its permissions.
+   Then fill `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`, and `SNOWFLAKE_SEARCH_SERVICE`.
+3. **Check Cortex Search is available in the account's region**, read-only, once the token works.
+4. **Write Rose's life story**, consistent with the demo (Anna, Mark, Joan).
+5. **Agree the agent change with the voice owner:**
+   - a `search_life_story` tool, used for the past and preferences only, never plans, and memories
+     always win;
+   - a redeploy of the shared agent;
+   - a re-run of the paid safety suite, plus new cases.
+
+Then, on our side: a staff endpoint to add passages and an endpoint for the agent to search, over
+Snowflake's REST API with `httpx` (no new package). A failure falls back to "I'm not sure".
+
+**Costs to plan for:** a new passage isn't searchable until the service refreshes, and each refresh
+uses warehouse credits. Use a short refresh delay and a small warehouse that suspends quickly.
+
 ## API for the Interface owner
 
 All of these need the `X-Staff-Pin` header; the `request()` helper in `api.ts` adds it. Times are
@@ -662,6 +824,27 @@ Each returns the updated memory.
 
 After any action, reload the pending list and the current memories.
 
+**Dashboard, `GET /dashboard`** (staff only)
+```json
+{"day": "2026-10-10", "asks_today": 14,
+ "by_topic": [{"topic": "Dentist appointment", "asks": 9}, {"topic": "Asked the care team", "asks": 3},
+              {"topic": "Asked for help", "asks": 1}, {"topic": "Other", "asks": 1}],
+ "by_hour": [{"hour": "2026-10-09T23:00:00+00:00", "asks": 0}, "…24 entries, oldest first…"],
+ "open_alerts": {"help_requested": 1, "missing_info": 2, "self_reported_med": 1},
+ "self_reported_today": [{"id": "…", "ts": "…", "text": "I took my pills", "kind": "medication",
+                          "status": "self_reported"}]}
+```
+- The headline is the top topic: "Rose asked about the dentist 9 times today".
+- `by_hour` is ready for a bar chart. Hours are UTC instants, so show them in local time.
+- Self-reports are what the patient *said*: label them "not verified".
+- Refreshing every 30–60 seconds is enough; new answers count at once.
+
+**History, `GET /memories/{id}/history`**: `{"versions": [oldest … newest]}`, each a memory with
+its `status`. Show it as "what changed": time, pickup, and who, version to version.
+
+**Demo reset, `POST /demo/reset`**: returns `{"memories": 5, "removed": {"interactions": 12, …}}`.
+It resets the shared database for everyone, so put it behind a confirmation dialog.
+
 ## Live extraction results so far
 
 On the free tier, the live set has been run in pieces (Saturday, October 10, 2026).
@@ -702,6 +885,16 @@ On the free tier, the live set has been run in pieces (Saturday, October 10, 202
   - Nothing else regressed: the offline extraction checks (24/24), the memory-rule checks (7/7,
     now including `cancelled`), the step 1–3 endpoint checks with and without the database, the
     step 4 failure-path checks, and the frontend build and lint.
+- **Step 6:**
+  - `records_tests.py` passes 36 of 36, against the database and offline, and cleans up its test
+    patient.
+  - With the reset's recount switched off as a test, the earlier-hours check failed (7 answers
+    left on the dashboard), which proves the recount is needed.
+  - That same run exposed the frozen-hour bug (decision 54). After the fix, the watermark stays at
+    the start of the current hour, even after two resets.
+  - Nothing else regressed: `review_tests.py` (36/36), the offline extraction checks (24/24), the
+    memory-rule checks (7/7), the earlier endpoint and failure-path checks, and the frontend build
+    and lint.
 
 ## Known issues and follow-ups
 
@@ -720,18 +913,22 @@ On the free tier, the live set has been run in pieces (Saturday, October 10, 202
 - **No record of when a plan was cancelled.** Only its status changes.
 - **Duplicate pending proposals aren't merged.** Saying the same change twice makes two cards.
   Confirming one makes the other `stale`.
+- **Answers that used no memory** show "Checked 0 memories, none named in the answer" on the
+  Conversations page (decision 52). That's for the Interface owner to reword.
+- **Dashboard topics rely on receipt word matching** (decision 51).
 - **A harmless warning:** `StarletteDeprecationWarning` from FastAPI's test client.
 
 ## Next
 
-Steps 4 and 5 are described in decisions 25 to 46 above.
+Steps 4 to 6 are described in decisions 25 to 57 above.
 
-1. **Interface owner:** the review cards and the transcript box, from the contract above.
+1. **Interface owner:** the review cards, the transcript box, the dashboard page, and the reset
+   button, all from "API for the Interface owner".
 2. **Pull request from `TrackB_Memory` to `main`.** It touches a few voice and frontend files (see
    "What changed"), so review it together.
 3. **Once Gemini billing is decided:**
    - run the 11 remaining live extraction cases (command under "Live extraction results so far");
    - run one end-to-end check: a transcript becomes a pending memory, confirm it, and it appears
      in `/voice/facts`.
-4. **Tiger Data showcase:** move interactions into the hypertable, and add `GET /dashboard` with the
-   hourly repetition counts.
+4. **Snowflake life story:** the steps under "Snowflake life story: roadblocks", starting with the
+   access-token policy.
