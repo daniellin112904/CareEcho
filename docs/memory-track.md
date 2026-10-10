@@ -87,6 +87,7 @@ in `backend/.env` and restart. See decision 16.
 | `backend/app/voice/messages.py` | **Step 6:** audio files named by the UUID's hex digits (decision 50; voice-owned, part of the approved fixes) |
 | `frontend/src/voice/agentTools.ts`, `frontend/src/api.ts` | **Step 6:** every answer is logged, emergencies marked (decision 52; voice owner approved) |
 | `backend/scripts/records_tests.py` | **New (step 6).** 36 checks against the database and offline (decision 57) |
+| `backend/scripts/snowflake_setup.sql`, `backend/.env.example` | **New.** The Snowflake life-story setup, for the account owner to run in Snowsight (decisions 58, 59) |
 | `backend/scripts/safety_tests.py` | **Step 5:** `cancelled` added to the never-spoken memory-rule check |
 
 ## Decisions
@@ -733,37 +734,109 @@ Plan.md intended.
   the reset to clear them. With the reset's recount switched off as a test, exactly that check
   failed.
 
-## Snowflake life story: roadblocks
+## Snowflake life story
 
-The team lead wants Rose's life story stored in Snowflake, with Cortex Search over it. Nothing on
-our side blocks it; these steps outside the code do, in this order:
+The team lead wants Rose's life story stored in Snowflake, with Cortex Search over it, so the agent
+can talk about her past. Status on Saturday, October 10, 2026:
 
-1. **The access token is refused** (`401: Network policy is required`). By default, Snowflake only
-   accepts these tokens from a user covered by a network policy, which is an IP allowlist.
-   **Fix:** the account admin runs this once in Snowsight (an authentication policy lives in a
-   schema, so create the database and schema first):
-   ```sql
-   CREATE AUTHENTICATION POLICY vela_pat_policy
-     PAT_POLICY = (NETWORK_POLICY_EVALUATION = ENFORCED_NOT_REQUIRED);
-   ALTER USER <the_vela_user> SET AUTHENTICATION POLICY vela_pat_policy;
-   ```
-   An IP allowlist would also work, but breaks whenever the venue Wi-Fi's IP changes.
-2. **Nothing exists in Snowflake yet.** A one-time setup script creates the database, schema,
-   life-story table (one short passage per row), the Cortex Search service, and its permissions.
-   Then fill `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`, and `SNOWFLAKE_SEARCH_SERVICE`.
-3. **Check Cortex Search is available in the account's region**, read-only, once the token works.
-4. **Write Rose's life story**, consistent with the demo (Anna, Mark, Joan).
-5. **Agree the agent change with the voice owner:**
-   - a `search_life_story` tool, used for the past and preferences only, never plans, and memories
-     always win;
-   - a redeploy of the shared agent;
-   - a re-run of the paid safety suite, plus new cases.
+| Step | State |
+|---|---|
+| The access token works | **done**: the account owner added `VELA_PAT_POLICY` (no IP allowlist needed) |
+| Cortex Search in the account's region | **fine**: Google Cloud `us-east4` runs it directly, with the `snowflake-arctic-embed` models |
+| Warehouse, database, schema, table, search service | **script written**: `backend/scripts/snowflake_setup.sql`, for the account owner to run |
+| Rose's life story | **to write**: the team, using the guide below |
+| The agent's `search_life_story` tool | **to agree** with the voice owner |
+| The backend endpoints (add passages, search) | **after the above** (memory owner) |
 
-Then, on our side: a staff endpoint to add passages and an endpoint for the agent to search, over
-Snowflake's REST API with `httpx` (no new package). A failure falls back to "I'm not sure".
+**58. The setup is a script in the repo, and the account owner runs it in Snowsight.**
+- *What it creates:*
+  - `VELA_WH`, an X-Small warehouse that suspends after 1 minute;
+  - the `VELA` database and its `LIFE_STORY` schema;
+  - the `PASSAGES` table, one fact per row, with topic, people, who said it, and a `sensitive`
+    flag;
+  - the `PASSAGE_SEARCH` Cortex Search service over it (refresh delay 5 minutes,
+    `snowflake-arctic-embed-m-v1.5`).
+- *Why the account owner runs it rather than our API session:* account-level objects get created
+  where the owner sees each statement. It's also safe to run again (`IF NOT EXISTS`), and it's
+  reviewable in the pull request.
+- *Implications:*
+  - Then set `SNOWFLAKE_WAREHOUSE=VELA_WH`, `SNOWFLAKE_DATABASE=VELA`,
+    `SNOWFLAKE_SCHEMA=LIFE_STORY`, and `SNOWFLAKE_SEARCH_SERVICE=PASSAGE_SEARCH` in
+    `backend/.env`. They're already in `.env.example`.
+  - To change the search settings later, recreate the service with `CREATE OR REPLACE`; the
+    embedding model can't be changed in place.
 
-**Costs to plan for:** a new passage isn't searchable until the service refreshes, and each refresh
-uses warehouse credits. Use a short refresh delay and a small warehouse that suspends quickly.
+**59. The app uses the account owner's existing token** (the owner's decision: no separate role or
+token for the app).
+- *The risk, accepted for the hackathon:* that token can act as `ACCOUNTADMIN` from any IP address,
+  so anyone with `backend/.env` controls the whole Snowflake account.
+- *Implications:*
+  - Never commit, paste, or screenshot `backend/.env`.
+  - Replace the token after the hackathon.
+  - If that changes, the fix is a role with only the life-story permissions, and a token
+    restricted to that role.
+
+### How to write the life story
+
+**What it's for:** comfortable conversation about Rose's past. "Where did I grow up?", "What was
+my job?", "Who is Mark?", "What music do I like?" Plans, appointments, and anything time-sensitive
+stay in memories, which a caregiver confirms.
+
+**Format:** one fact per passage (one row), so a search returns exactly the line that answers.
+- 1–2 sentences, about 15–40 words.
+- Names, not "she" or "he": each passage is found on its own ("Rose worked as…").
+- Include the words people ask with: "Rose worked as a schoolteacher; her job was teaching second
+  grade" matches both "job" and "work".
+- Concrete details (places, names, decades, a song, a smell): that's what makes reminiscence
+  comforting.
+- Third person, in English. The agent says it as "You grew up in…" and translates it, keeping
+  names as written, like memories.
+- Columns: `TOPIC` (family, childhood, work, home, music, food, pets, friends), `PASSAGE`,
+  `PEOPLE` (names in it), `SAID_BY` (who it came from, like "Anna, daughter"), and `SENSITIVE`.
+
+**Good examples** (fictional, and consistent with the demo: Anna is her daughter, Mark her son in
+Boston, Joan her friend):
+- "Rose grew up in Providence, Rhode Island, in a yellow house on Elm Street with her parents and
+  two younger brothers."
+- "Rose worked as a second-grade teacher at Lincoln Elementary School for 32 years and retired in
+  2004."
+- "Rose's son Mark lives in Boston with his wife, Priya."
+- "Rose loves Frank Sinatra. 'The Way You Look Tonight' was played at her wedding."
+- "Rose and Joan became friends as neighbors in the 1970s and played bridge together on Thursday
+  nights."
+- "When her children were small, Rose had a golden retriever named Biscuit."
+
+**Leave out:**
+- **Schedules or anything coming up**, like "Mark calls every Sunday". If he doesn't call this
+  Sunday, the agent would have said something false. Those are memories.
+- **Medicine or health details.** The agent never talks about them.
+- **Anything that contradicts the demo memories.** For example, don't move Mark out of Boston.
+- **Guesses**, and real people's details. Rose is invented, so keep everything invented.
+- **Distressing topics, like a late spouse, for the demo.** If one is included, mark it
+  `SENSITIVE` so the agent steers gently instead of repeating hard news.
+
+**Size:** 30–50 passages covering childhood, work, home, each family member, friends, pets,
+music, food, hobbies, and a few big moments (her wedding, a first home).
+
+**Test questions:** write 10–15 alongside the passages, each with the passage that should answer it,
+like "What did I do for work?" → the teaching passage. They become the life-story test set, like
+the extraction tests.
+
+**Where it lives:** a file in the repo (`backend/app/memory/life_story_demo.json`), so the backend
+can load it into Snowflake and the demo reset can restore it.
+
+**Still to agree with the voice owner:**
+- a `search_life_story` tool, used for the past and preferences only, never plans, and memories
+  always win;
+- a redeploy of the shared agent;
+- a re-run of the paid safety suite, plus new cases.
+
+The backend side is then a staff endpoint to add passages and an endpoint for the agent to search,
+both over Snowflake's REST API with `httpx` (no new package). A failure falls back to "I'm not
+sure".
+
+**Costs:** each refresh of the search service and each insert briefly runs `VELA_WH`, which
+suspends after a minute idle. A new passage is searchable within the 5-minute refresh delay.
 
 ## API for the Interface owner
 
@@ -930,5 +1003,8 @@ Steps 4 to 6 are described in decisions 25 to 57 above.
    - run the 11 remaining live extraction cases (command under "Live extraction results so far");
    - run one end-to-end check: a transcript becomes a pending memory, confirm it, and it appears
      in `/voice/facts`.
-4. **Snowflake life story:** the steps under "Snowflake life story: roadblocks", starting with the
-   access-token policy.
+4. **Snowflake life story:**
+   - the account owner runs `backend/scripts/snowflake_setup.sql`;
+   - the team writes the life story;
+   - the voice owner agrees the agent tool;
+   - then the memory owner builds the endpoints (see "Snowflake life story").
