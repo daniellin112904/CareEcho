@@ -27,16 +27,23 @@ def build_facts(patient_id: str) -> dict:
     returned whatever the topic: the list is short, and filtering by the agent's guess at a
     topic ("leaving") could hide the memory that answers it ("Dentist appointment").
     """
-    cutoff = datetime.now(timezone.utc) - EXPIRED_AFTER
+    return facts_from(store.current_memories(patient_id), datetime.now(timezone.utc))
+
+
+def facts_from(memories: list[dict], now: datetime) -> dict:
+    """build_facts for given memories at a given time (the safety tests use a fixed time)."""
+    cutoff = now - EXPIRED_AFTER
+    today = now.astimezone(_tz()).date()
     lines, ids = [], []
-    for m in store.current_memories(patient_id):
+    for m in memories:
         if m["status"] not in ("confirmed", "tentative"):
             continue
-        if m.get("event_at") and datetime.fromisoformat(m["event_at"]) < cutoff:
+        if m.get("event_at") and _ended(m, cutoff, today):
             continue
         line = m["summary"]
         if m.get("event_at"):
-            line += f", {spoken_time(m['event_at'])}"
+            # An all-day plan has no time, so none is said ("Saturday, October 17")
+            line += f", {spoken_day(m['event_at']) if m.get('all_day') else spoken_time(m['event_at'])}"
         # Not source_quote: words like "tomorrow" in it go stale the next day
         for key, value in (m.get("details") or {}).items():
             line += f"; {key.replace('_', ' ')}: {spoken_time(value) if is_timestamp(value) else value}"
@@ -47,10 +54,28 @@ def build_facts(patient_id: str) -> dict:
     return {"facts": "\n".join(lines) or NO_MEMORY, "memory_ids": ids}
 
 
+def _ended(memory: dict, cutoff: datetime, today) -> bool:
+    """A timed event ends two hours after it starts; an all-day one when its day is over."""
+    at = datetime.fromisoformat(memory["event_at"])
+    if memory.get("all_day"):
+        return at.astimezone(_tz()).date() < today
+    return at < cutoff
+
+
+def _tz() -> ZoneInfo:
+    return ZoneInfo(os.getenv("TIMEZONE", "America/New_York"))
+
+
 def spoken_time(iso: str) -> str:
     """'2026-10-10T14:30:00-04:00' -> 'Saturday, October 10 at 2:30 PM', in the patient's timezone."""
-    at = datetime.fromisoformat(iso).astimezone(ZoneInfo(os.getenv("TIMEZONE", "America/New_York")))
+    at = datetime.fromisoformat(iso).astimezone(_tz())
     return f"{at:%A, %B} {at.day} at {at:%I:%M %p}".replace(" 0", " ")
+
+
+def spoken_day(iso: str) -> str:
+    """'2026-10-17T00:00:00-04:00' -> 'Saturday, October 17': for all-day plans, which have no time."""
+    at = datetime.fromisoformat(iso).astimezone(_tz())
+    return f"{at:%A, %B} {at.day}"
 
 
 def is_timestamp(value) -> bool:

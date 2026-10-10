@@ -43,8 +43,8 @@ export default function MemoriesPage() {
                   weekday: "long",
                   month: "long",
                   day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
+                  // An all-day plan has a day but no time
+                  ...(m.all_day ? {} : { hour: "numeric", minute: "2-digit" }),
                 })}
               </span>
             )}

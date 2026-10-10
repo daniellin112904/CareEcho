@@ -215,7 +215,7 @@ function ComingUp() {
   if (!memories) return null;
   const now = new Date();
   const next = memories
-    .filter((m) => (m.status === "confirmed" || m.status === "tentative") && m.event_at && new Date(m.event_at) >= now)
+    .filter((m) => (m.status === "confirmed" || m.status === "tentative") && m.event_at && !hasPassed(m, now))
     .sort((a, b) => Date.parse(a.event_at!) - Date.parse(b.event_at!))[0];
 
   return (
@@ -227,7 +227,7 @@ function ComingUp() {
             {next.status === "tentative" && <span className="patient-tag">Not certain yet</span>}
           </p>
           <p className="patient-card-title">
-            {next.summary}, {whenWords(new Date(next.event_at!), now)}
+            {next.summary}, {whenWords(new Date(next.event_at!), now, next.all_day)}
           </p>
           {pickupLine(next) && <p className="patient-card-detail">{pickupLine(next)}</p>}
         </>
@@ -352,7 +352,13 @@ function timeWords(date: Date) {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function whenWords(date: Date, now: Date) {
+// An all-day plan ("Anna might visit Saturday") stays up all that day; a timed one until it starts
+function hasPassed(memory: Memory, now: Date) {
+  const at = new Date(memory.event_at!);
+  return memory.all_day ? startOfDay(at) < startOfDay(now) : at < now;
+}
+
+function whenWords(date: Date, now: Date, allDay = false) {
   const days = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);
   const day =
     days === 0
@@ -362,7 +368,8 @@ function whenWords(date: Date, now: Date) {
         : days < 7
           ? `on ${date.toLocaleDateString([], { weekday: "long" })}`
           : `on ${date.toLocaleDateString([], { month: "long", day: "numeric" })}`;
-  return `${day} at ${timeWords(date)}`;
+  // An all-day plan has no time to say
+  return allDay ? day : `${day} at ${timeWords(date)}`;
 }
 
 function startOfDay(date: Date) {

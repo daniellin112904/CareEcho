@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 python-multipart
-psycopg[binary]
+psycopg[binary,pool]
 google-genai
 elevenlabs
 httpx
