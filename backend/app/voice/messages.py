@@ -5,6 +5,7 @@ audio is generated once and replays work offline. Swap for a database table late
 """
 
 import json
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -18,6 +19,9 @@ INDEX = DATA_DIR / "family_messages.json"
 # don't overwrite each other and readers never see a half-written file. Only covers one
 # process: run a single uvicorn worker until this moves to a database.
 _lock = threading.RLock()
+
+# Same shape as uuid.uuid4().hex — rejects path separators and ".." before building paths
+_MESSAGE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 def list_messages() -> list[dict]:
@@ -49,13 +53,17 @@ def add_message(from_name: str, voice_id: str, text: str, audio: bytes) -> dict:
 
 
 def delete_message(message_id: str) -> bool:
+    try:
+        path = audio_path(message_id)
+    except ValueError:
+        return False
     with _lock:
         messages = list_messages()
         kept = [m for m in messages if m["id"] != message_id]
         if len(kept) == len(messages):
             return False
         _save(kept)
-    audio_path(message_id).unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
     return True
 
 
@@ -67,5 +75,11 @@ def delete_messages_for_voice(voice_id: str):
 
 
 def audio_path(message_id: str) -> Path:
-    # IDs are uuid hex, so they can't contain path separators
-    return AUDIO_DIR / f"{message_id}.mp3"
+    """Resolved path to `{id}.mp3` under family_audio. Raises ValueError if id is unsafe."""
+    if not _MESSAGE_ID.fullmatch(message_id):
+        raise ValueError("invalid message id")
+    path = (AUDIO_DIR / f"{message_id}.mp3").resolve()
+    root = AUDIO_DIR.resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("invalid message id")
+    return path

@@ -151,7 +151,10 @@ def latest_family_message():
 
 @router.get("/family-messages/{message_id}/audio")
 def family_message_audio(message_id: str):
-    path = messages.audio_path(message_id)
-    if not message_id.isalnum() or not path.exists():
+    try:
+        path = messages.audio_path(message_id)
+    except ValueError:
+        raise HTTPException(404, "That message no longer exists")
+    if not path.exists():
         raise HTTPException(404, "That message no longer exists")
     return FileResponse(path, media_type="audio/mpeg")
