@@ -3,12 +3,12 @@ from typing import Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app import db, store
 from app.auth import require_staff
-from app.memory import extraction
+from app.memory import extraction, life_story
 from app.memory.demo import PATIENT_NAME, demo_memories
 from app.store import PATIENT_ID
 
@@ -153,4 +153,44 @@ def reset_demo():
     alerts, or "Remind now" records. Family messages are kept. The database is shared, so this
     resets it for everyone: ask before pressing it."""
     return store.reset_demo(PATIENT_ID, PATIENT_NAME, demo_memories(datetime.now(timezone.utc)))
+
+
+# Life story: the patient's past, in Snowflake (app/memory/life_story.py)
+
+
+@router.get("/life-story")
+def search_life_story(q: str = Query(min_length=1, max_length=200)):
+    """What the agent's search_life_story tool returns (the patient screen has no login): lines
+    about the patient's past that answer the question, plus their IDs. Always 200, so the agent
+    always gets something usable: NO_LIFE_STORY when nothing answers, LIFE_STORY_FAILED when
+    Snowflake is unset or unreachable, and both tell it to say it isn't sure."""
+    return life_story.lookup(PATIENT_ID, q)
+
+
+def _snowflake(action, *args):
+    if not life_story.enabled():
+        raise HTTPException(503, "The life story needs Snowflake, and its settings in backend/.env aren't all set")
+    try:
+        return action(*args)
+    except life_story.LifeStoryError as err:
+        raise HTTPException(502, f"Snowflake: {err}")
+
+
+@staff_router.get("/life-story/passages")
+def list_life_story():
+    """Every passage of the patient's life story, oldest first."""
+    return {"passages": _snowflake(life_story.list_passages, PATIENT_ID)}
+
+
+@staff_router.post("/life-story/passages", status_code=201)
+def add_life_story(body: life_story.Passage):
+    """One short fact about the patient's past. Searchable by the agent within about a minute
+    (the search service's refresh delay). Medicine is refused (422)."""
+    return _snowflake(life_story.add_passage, PATIENT_ID, body)
+
+
+@staff_router.delete("/life-story/passages/{passage_id}", status_code=204)
+def delete_life_story(passage_id: UUID):
+    if not _snowflake(life_story.delete_passage, PATIENT_ID, str(passage_id)):
+        raise HTTPException(404, "That passage doesn't exist")
 

@@ -46,13 +46,14 @@ CREATE TABLE IF NOT EXISTS VELA.LIFE_STORY.PASSAGES (
 ALTER TABLE VELA.LIFE_STORY.PASSAGES SET CHANGE_TRACKING = TRUE;
 
 -- Searches PASSAGE by meaning. PATIENT_ID and TOPIC can filter results. A new passage becomes
--- searchable within TARGET_LAG. EMBEDDING_MODEL can't be changed later: to change it, or any
--- setting here, use CREATE OR REPLACE instead of IF NOT EXISTS (the two can't be combined)
+-- searchable within TARGET_LAG (a refresh only runs when passages change, so a short lag costs
+-- little). EMBEDDING_MODEL can't be changed later: to change it, or any setting here, use
+-- CREATE OR REPLACE instead of IF NOT EXISTS (the two can't be combined)
 CREATE CORTEX SEARCH SERVICE IF NOT EXISTS VELA.LIFE_STORY.PASSAGE_SEARCH
   ON PASSAGE
   ATTRIBUTES PATIENT_ID, TOPIC
   WAREHOUSE = VELA_WH
-  TARGET_LAG = '5 minutes'
+  TARGET_LAG = '1 minute'
   EMBEDDING_MODEL = 'snowflake-arctic-embed-m-v1.5'
   COMMENT = 'Vela: the agent''s search_life_story tool'
   AS (
