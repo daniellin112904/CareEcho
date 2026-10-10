@@ -217,3 +217,19 @@
     margin-top: 14px;
   }
 }
+
+/* Shown after an urgent alert, across the whole tray, until staff resolve it */
+.patient-care-told {
+  grid-column: 1 / -1;
+  border: 2px solid #f09595;
+  background: #fcebeb;
+}
+
+.patient-care-told .patient-card-title {
+  margin-top: 0;
+  color: #501313;
+}
+
+.patient-care-told .patient-card-detail {
+  color: #791f1f;
+}

@@ -91,6 +91,16 @@ def raise_alert(body: NewAlert):
     return _append("alerts", {**body.model_dump(), "resolved": False})
 
 
+@router.get("/alerts/{alert_id}/status")
+def alert_status(alert_id: str):
+    """Lets the patient screen clear "Your care team has been told" once staff resolve it.
+    Only whether it's resolved: the ID is unguessable and the message stays staff-only."""
+    match = next((a for a in _read("alerts") if a["id"] == alert_id), None)
+    if not match:
+        raise HTTPException(404, "That alert no longer exists")
+    return {"resolved": match["resolved"]}
+
+
 # Staff side
 
 

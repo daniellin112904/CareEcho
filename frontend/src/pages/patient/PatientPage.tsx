@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationProvider, useConversation, useConversationControls, useConversationStatus } from "@elevenlabs/react";
 import {
   familyMessageAudioUrl,
+  getAlertStatus,
   getCurrentMemories,
   getLatestFamilyMessage,
   startVoiceSession,
@@ -13,21 +14,32 @@ import Orb, { type OrbMode } from "../../voice/Orb";
 import "./patient.css";
 
 export default function PatientPage() {
+  // The open urgent alert, if any: shown until staff mark it resolved
+  const [urgentAlertId, setUrgentAlertId] = useState<string | null>(null);
+  const clearUrgent = useCallback(() => setUrgentAlertId(null), []);
+
   return (
     <ConversationProvider>
       <main className="patient">
         <Clock />
-        <Companion />
+        <Companion onUrgentAlert={setUrgentAlertId} />
         <section className="patient-tray">
-          <ComingUp />
-          <FamilyMessageCard />
+          {/* In an emergency only this card shows, so nothing competes with it */}
+          {urgentAlertId ? (
+            <CareTeamToldCard alertId={urgentAlertId} onResolved={clearUrgent} />
+          ) : (
+            <>
+              <ComingUp />
+              <FamilyMessageCard />
+            </>
+          )}
         </section>
       </main>
     </ConversationProvider>
   );
 }
 
-function Companion() {
+function Companion({ onUrgentAlert }: { onUrgentAlert: (alertId: string) => void }) {
   const [starting, setStarting] = useState(false);
   const [caption, setCaption] = useState("");
   const [error, setError] = useState("");
@@ -63,7 +75,10 @@ function Companion() {
     setStarting(true);
     try {
       const session = await startVoiceSession();
-      agentSession.current = createAgentSession(session.dynamic_variables.patient_name ?? "The patient");
+      agentSession.current = createAgentSession(session.dynamic_variables.patient_name ?? "The patient", {
+        onUrgentAlert,
+        tellAgent: sendContextualUpdate,
+      });
       conversation.startSession({
         conversationToken: session.token,
         connectionType: "webrtc",
@@ -190,6 +205,25 @@ function ComingUp() {
           <p className="patient-card-title">No plans yet today</p>
         </>
       )}
+    </div>
+  );
+}
+
+function CareTeamToldCard({ alertId, onResolved }: { alertId: string; onResolved: () => void }) {
+  useEffect(() => {
+    const check = () =>
+      getAlertStatus(alertId)
+        .then(({ resolved }) => resolved && onResolved())
+        .catch(() => {});
+    const id = setInterval(check, 5_000);
+    return () => clearInterval(id);
+  }, [alertId, onResolved]);
+
+  // Says only what is true: the care team was told. Not that help is on the way.
+  return (
+    <div className="patient-card patient-care-told" role="status">
+      <p className="patient-card-title">Your care team has been told</p>
+      <p className="patient-card-detail">Stay where you are if you can. You're not alone.</p>
     </div>
   );
 }

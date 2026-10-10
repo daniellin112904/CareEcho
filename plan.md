@@ -103,11 +103,33 @@ memory teammate are marked *(Memory)*; until they exist, the tool handlers use m
 - **Tested** with ElevenLabs' text-only simulated conversations: it looked up before answering,
   asked the care team about the dog, and logged the pills report.
 
-### M3. Safety behaviors (about 1.5 h)
-- [ ] Medication: never confirm a dose ("I don't have that written down, I'll ask Anna"), log it as unverified
-- [ ] Emergency tool `raise_urgent_alert(reason)`: calm reply, and the patient screen shows "Help is on the way"
-- [ ] Backup: the patient page scans what Rose says (fell, chest pain, can't breathe, lost) and raises the alert itself
+### M3. Safety behaviors ✅ done
+- [x] Medication: never confirms or advises a dose ("I don't have that written down, so I've asked your care team"), logs reports as unverified
+- [x] Emergency tool `raise_urgent_alert(reason)`: calm reply, and the patient screen shows "Your care team has been told"
+- [x] Backup: the patient page scans what Rose says (fell, chest pain, can't breathe, lost) and raises the alert itself
 - [x] Staff pages notice it within 5 seconds: a red-edged toast that stays until dismissed and a more urgent chime (done with the alert notifications in M2)
+
+**How it works**
+- **Medicine.** The prompt forbids saying whether a dose was taken, or suggesting taking, skipping,
+  or changing one, because a wrong answer could cause a missed or double dose. "Did I take my
+  pills?" and "How many should I take?" go to the care team as alerts. "I took my pills" is saved
+  as self-reported and shows on the Alerts page as "Medicine, not verified".
+- **Emergencies.** If Rose says she fell, is hurt, has chest pain, can't breathe, or is lost, the
+  agent calls `raise_urgent_alert` first, then says "I've told your care team right away". For
+  chest pain or trouble breathing it also says to call 911 if she can.
+- **Honest wording (changed from the plan).** The screen says "Your care team has been told", not
+  "Help is on the way": the system alerts the care team, it doesn't dispatch anyone. The agent is
+  told never to say someone is coming, and when asked it says it has told the care team and is
+  staying with her. The card replaces the other cards and clears when staff resolve the alert.
+- **Backup that doesn't need the AI.** The patient page checks Rose's own words for emergency
+  phrases ("I fell", "chest pain", "can't breathe", "I'm lost") and raises the alert itself, then
+  tells the agent it was raised. It matches phrases, not single words, so "help me remember" doesn't
+  set it off.
+- **Each new symptom is a new alert.** One alert per thing Rose says, whoever raises it. So "I fell"
+  and then "my chest hurts too" are two alerts, and staff see it getting worse.
+- **Tested** with simulated conversations: no dose confirmed across four medication questions; the
+  fall raised an alert before the reply, chest pain raised a second one with "call 911", and "Is
+  someone coming?" got an honest "I've told your care team and I'm staying with you".
 
 ### M4. Answer receipts (about 1.5 h)
 - [ ] The tool handler remembers which memory IDs the last `get_memories` returned and attaches them to

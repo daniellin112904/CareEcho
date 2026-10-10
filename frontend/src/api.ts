@@ -142,3 +142,7 @@ export function listAlerts() {
 export function resolveAlert(id: string) {
   return request<void>(`/alerts/${id}/resolve`, { method: "POST" });
 }
+
+export function getAlertStatus(id: string) {
+  return request<{ resolved: boolean }>(`/alerts/${id}/status`);
+}

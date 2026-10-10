@@ -8,7 +8,14 @@ const LOOKUP_FAILED = "NO_MEMORY: the memory list couldn't be loaded. Say you ar
 
 // An answer that promises to find out. If the agent says this without calling ask_caregiver,
 // the alert is raised anyway, so a promise made to the patient is always passed on.
-const PROMISED_TO_ASK = /\b(not sure|don['’]t know|do not know|i['’]ll ask|i will ask|find out|ask the care team)\b/i;
+const PROMISED_TO_ASK =
+  /\b(not sure|don['’]t know|do not know|i['’]ll ask|i will ask|find out|ask(ed)? (the|your) care team)\b/i;
+
+// Backup for emergencies: if the patient says one of these, the urgent alert goes out from
+// the page itself, even if the agent misses it. Phrases, not single words, so "help me
+// remember" or "a fall concert" don't set it off.
+const EMERGENCY =
+  /\b(i fell|i['’]ve fallen|i have fallen|fell down|can['’]?not get up|can['’]t get up|chest pain|my chest hurts|can['’]t breathe|cannot breathe|hard to breathe|i['’]m bleeding|i am bleeding|i['’]m hurt|i am hurt|hurt myself|i['’]m lost|i am lost|heart attack|call (an )?ambulance|call 911)\b/i;
 
 type Turn = {
   question: string;
@@ -28,8 +35,32 @@ type Turn = {
  * remembers which memories its lookups returned, so the record of what an answer was
  * based on never depends on the AI copying IDs correctly.
  */
-export function createAgentSession(patientName: string) {
+type SessionHooks = {
+  /** An urgent alert went out; the patient screen shows "Your care team has been told". */
+  onUrgentAlert: (alertId: string) => void;
+  /** Background note for the agent; it doesn't reply to these. */
+  tellAgent: (text: string) => void;
+};
+
+export function createAgentSession(patientName: string, hooks: SessionHooks) {
   let turn: Turn | null = null;
+  // One urgent alert per thing the patient says, whether the agent or the backup raised it.
+  // A new symptom later ("my chest hurts too") is a new alert, so staff see it get worse.
+  let urgent: Promise<string | null> | null = null;
+
+  function raiseUrgent(words: string) {
+    urgent ??= raiseAlert("help_requested", `${patientName} may need help. They said: "${words}"`)
+      .then((alert) => {
+        hooks.onUrgentAlert(alert.id);
+        return alert.id;
+      })
+      .catch((err) => {
+        console.warn("Urgent alert failed", err);
+        urgent = null;
+        return null;
+      });
+    return urgent;
+  }
 
   // A turn is logged once the next question starts (or the conversation ends), so the
   // whole answer and any "I'll ask the care team" are known by then
@@ -57,6 +88,12 @@ export function createAgentSession(patientName: string) {
     // Silence comes through as "..."
     if (!text || /^\.+$/.test(text)) return;
     if (role === "user") {
+      urgent = null;
+      if (EMERGENCY.test(text)) {
+        raiseUrgent(text).then((id) => {
+          if (id) hooks.tellAgent(`The care team has just been alerted that ${patientName} may need help.`);
+        });
+      }
       flush();
       turn = { question: text, answer: [], topic: "", memoryIds: [], lookedUp: false, askedCaregiver: false };
     } else {
@@ -89,6 +126,13 @@ export function createAgentSession(patientName: string) {
         console.warn("ask_caregiver failed", err);
         return "The care team couldn't be reached right now. Say you'll ask them later.";
       }
+    },
+
+    async raise_urgent_alert({ reason }: { reason?: string }) {
+      const id = await raiseUrgent(reason ?? turn?.question ?? "");
+      return id
+        ? "The care team has been alerted. Calmly tell them you've told their care team right away."
+        : "The alert could not be sent. Calmly tell them to call 911 or get someone nearby if they can.";
     },
 
     async log_patient_statement({ text, kind }: { text?: string; kind?: string }) {
