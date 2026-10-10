@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import psycopg
 from psycopg.types.json import Jsonb
 
 from app import db
@@ -132,10 +133,10 @@ def finish_session(session_id: str, patient_id: str, source: str, extraction: di
     transaction. Pending memories are never spoken until a caregiver confirms them.
 
     `candidates` come from app/memory/extraction.py (already validated). Returns the new
-    memory rows, in the same order.
+    memory rows, in the same order. Each entry in extraction["kept"] gets its memory's ID, so
+    the review list can show each pending memory its own warnings.
     """
     with db.pool().connection() as conn:
-        conn.execute("UPDATE sessions SET extraction = %s WHERE id = %s", (Jsonb(extraction), session_id))
         rows = [
             conn.execute(
                 "INSERT INTO memories (patient_id, kind, summary, details, event_at, all_day, status, certainty, "
@@ -146,7 +147,112 @@ def finish_session(session_id: str, patient_id: str, source: str, extraction: di
             ).fetchone()
             for c in candidates
         ]
+        for entry, row in zip(extraction.get("kept", []), rows):
+            entry["memory_id"] = str(row["id"])
+        conn.execute("UPDATE sessions SET extraction = %s WHERE id = %s", (Jsonb(extraction), session_id))
     return [_plain(r) for r in rows]
+
+
+# Review: staff confirm, reject, or cancel memories (database only). Every function is scoped to
+# the patient: another patient's memory counts as not found.
+
+
+class Conflict(Exception):
+    """The memory isn't in a state that allows this (answered as 409, with this message)."""
+
+
+def pending_memories(patient_id: str) -> list[dict]:
+    """Memories waiting for a caregiver, oldest first. Each also has:
+    - warnings: what extraction flagged for a human to check (from its session's record)
+    - replaces: the current memory it would replace, or None for something new
+    - stale: True when that memory was already changed or cancelled, so this one can't be confirmed
+    """
+    with db.pool().connection() as conn:
+        rows = [_plain(r) for r in conn.execute(
+            f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE patient_id = %s AND status = 'pending' "
+            "ORDER BY created_at", (patient_id,)).fetchall()]
+        session_ids = list({r["session_id"] for r in rows if r["session_id"]})
+        replaced_ids = list({r["supersedes_id"] for r in rows if r["supersedes_id"]})
+        sessions = conn.execute("SELECT id, extraction FROM sessions WHERE id = ANY(%s)",
+                                ([uuid.UUID(i) for i in session_ids],)).fetchall() if session_ids else []
+        replaced = conn.execute(
+            "SELECT id, summary, event_at, all_day, details, status FROM memories WHERE id = ANY(%s)",
+            ([uuid.UUID(i) for i in replaced_ids],)).fetchall() if replaced_ids else []
+    warnings = {entry["memory_id"]: entry.get("warnings", [])
+                for s in sessions for entry in (s["extraction"] or {}).get("kept", []) if entry.get("memory_id")}
+    replaced = {m["id"]: m for m in map(_plain, replaced)}
+    for r in rows:
+        old = replaced.get(r["supersedes_id"])
+        r["warnings"] = warnings.get(r["id"], [])
+        r["replaces"] = old
+        r["stale"] = bool(r["supersedes_id"]) and (old is None or old["status"] not in _SPEAKABLE)
+    return rows
+
+
+def confirm_memory(patient_id: str, memory_id: str, certainty: str | None = None) -> dict | None:
+    """A caregiver confirms a pending memory: from now on the agent may say it.
+
+    One transaction. Tentative certainty makes it 'tentative' (said as not certain), otherwise
+    'confirmed'. For an update, the version it replaces becomes 'superseded' at the same moment,
+    so there's always exactly one current version. The pending row is locked first, then the old
+    version: two competing updates queue on the old version, and the second finds it already
+    superseded (Conflict) instead of forking the chain.
+    """
+    try:
+        with db.pool().connection() as conn:
+            memory = conn.execute(
+                "SELECT status, certainty, supersedes_id FROM memories WHERE id = %s AND patient_id = %s FOR UPDATE",
+                (memory_id, patient_id)).fetchone()
+            if memory is None:
+                return None
+            if memory["status"] != "pending":
+                raise Conflict(f"This memory is already {memory['status']}.")
+            certainty = certainty or memory["certainty"] or "definite"
+            if memory["supersedes_id"]:
+                old = conn.execute("SELECT status FROM memories WHERE id = %s AND patient_id = %s FOR UPDATE",
+                                   (memory["supersedes_id"], patient_id)).fetchone()
+                if old is None or old["status"] not in _SPEAKABLE:
+                    raise Conflict("The plan this changes was already changed or cancelled. "
+                                   "Reject this one, or say it again.")
+                conn.execute("UPDATE memories SET status = 'superseded' WHERE id = %s", (memory["supersedes_id"],))
+            row = conn.execute(
+                "UPDATE memories SET status = %s, certainty = %s, confirmed_at = now() "
+                f"WHERE id = %s RETURNING {_MEMORY_COLUMNS}",
+                ("tentative" if certainty == "tentative" else "confirmed", certainty, memory_id)).fetchone()
+    except psycopg.errors.UniqueViolation:
+        # The no-fork index (schema.sql); the locks above should already prevent this
+        raise Conflict("The plan this changes was already changed. Reject this one, or say it again.")
+    return _plain(row)
+
+
+def reject_memory(patient_id: str, memory_id: str) -> dict | None:
+    """A caregiver says a pending memory is wrong. It's kept, as 'rejected', and never spoken."""
+    return _move(patient_id, memory_id, ["pending"], "rejected",
+                 {"confirmed": "It's already confirmed: cancel it instead.",
+                  "tentative": "It's already confirmed: cancel it instead."})
+
+
+def cancel_memory(patient_id: str, memory_id: str) -> dict | None:
+    """Staff remove a current plan (extraction ignores cancellations on purpose). It's kept, as
+    'cancelled', so receipts of past answers still show it, but it's never spoken again."""
+    return _move(patient_id, memory_id, _SPEAKABLE, "cancelled",
+                 {"pending": "It isn't confirmed yet: reject it instead.",
+                  "superseded": "Only the current version can be cancelled."})
+
+
+def _move(patient_id: str, memory_id: str, allowed: list[str], to: str, hints: dict[str, str]) -> dict | None:
+    """Changes a memory's status if it's in one of the allowed ones; None if it doesn't exist."""
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            f"UPDATE memories SET status = %s WHERE id = %s AND patient_id = %s AND status = ANY(%s) "
+            f"RETURNING {_MEMORY_COLUMNS}", (to, memory_id, patient_id, allowed)).fetchone()
+        if row is None:
+            current = conn.execute("SELECT status FROM memories WHERE id = %s AND patient_id = %s",
+                                   (memory_id, patient_id)).fetchone()
+            if current is None:
+                return None
+            raise Conflict(hints.get(current["status"], f"This memory is already {current['status']}."))
+    return _plain(row)
 
 
 # JSON file helpers (delete once everything below is SQL)

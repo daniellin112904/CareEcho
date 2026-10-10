@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
@@ -80,3 +81,55 @@ def add_transcript(body: Transcript):
         "candidates": [{**row, "warnings": c["warnings"]} for row, c in zip(rows, result["candidates"])],
         "dropped": result["dropped"],
     }
+
+
+# Review: staff decide what Vela may say. These read PATIENT_ID when called (not at import), so
+# the review tests can point them at a test patient.
+
+
+def _needs_database():
+    if not db.enabled():
+        raise HTTPException(503, "Reviewing memories needs the database, and DATABASE_URL isn't set")
+
+
+def _review(action, memory_id: UUID, *args):
+    _needs_database()
+    try:
+        row = action(PATIENT_ID, str(memory_id), *args)
+    except store.Conflict as err:
+        raise HTTPException(409, str(err))
+    if row is None:
+        raise HTTPException(404, "That memory doesn't exist")
+    return row
+
+
+@staff_router.get("/memories/pending")
+def pending_memories():
+    """Memories waiting for a caregiver, oldest first, with extraction's warnings, the memory
+    each update would replace, and whether that memory was already changed (stale)."""
+    _needs_database()
+    return {"pending": store.pending_memories(PATIENT_ID)}
+
+
+class Confirmation(BaseModel):
+    # The one thing staff may change before confirming; anything else wrong: reject and say it again
+    certainty: Literal["definite", "tentative"] | None = None
+
+
+@staff_router.post("/memories/{memory_id}/confirm")
+def confirm_memory(memory_id: UUID, body: Confirmation | None = None):
+    """From now on Vela may say it: the agent's next lookup, the patient screen and reminders
+    within 15 seconds. An update replaces the version it changes at the same moment."""
+    return _review(store.confirm_memory, memory_id, body.certainty if body else None)
+
+
+@staff_router.post("/memories/{memory_id}/reject")
+def reject_memory(memory_id: UUID):
+    """A pending memory was wrong. It's kept, as rejected, and never spoken."""
+    return _review(store.reject_memory, memory_id)
+
+
+@staff_router.post("/memories/{memory_id}/cancel")
+def cancel_memory(memory_id: UUID):
+    """A current plan was cancelled. It's kept for receipts of past answers, never spoken again."""
+    return _review(store.cancel_memory, memory_id)

@@ -4,10 +4,15 @@ What changed on the memory side, every decision behind it, and what each one mea
 of the code. Read this before touching `backend/app/store.py`, `backend/app/db.py`,
 `backend/app/memory/`, or the database.
 
-**Status (Saturday, October 10, 2026):** steps 1 to 4 are done and pushed on the `TrackB_Memory`
-branch; `main` is untouched. The agent, the patient screen, and the reminders read memories from Tiger Data,
-and `POST /sessions/transcript` turns what a caregiver says into **pending** memories with Gemini.
-Confirming and rejecting them (step 5) is next: until then, nothing extracted is ever spoken.
+**Status (Saturday, October 10, 2026):** the memory backend for steps 1 to 5 is done on the
+`TrackB_Memory` branch; `main` is untouched.
+- The agent, the patient screen, and the reminders read memories from Tiger Data.
+- `POST /sessions/transcript` turns what a caregiver says into **pending** memories with Gemini.
+- Staff can confirm, reject, or cancel memories through the API.
+
+The staff cards that use that API belong to the Interface owner; see "API for the Interface owner"
+below. Until they exist, review happens through the API, and nothing extracted is spoken before a
+person confirms it.
 
 | Step | What | State |
 |---|---|---|
@@ -15,7 +20,7 @@ Confirming and rejecting them (step 5) is next: until then, nothing extracted is
 | 2 | Database connection, demo data, seed script | done |
 | 3 | The store reads memories from Tiger Data | done |
 | 4 | `POST /sessions/transcript`: Gemini extraction into pending memories | done |
-| 5 | Confirm and reject endpoints, plus minimal staff cards | next |
+| 5 | Review: confirm, reject, cancel. API by Memory, staff cards by Interface | API done |
 
 ## Quick start
 
@@ -27,6 +32,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python scripts/init_db.py             # safe to run again: changes nothing if up to date
 .venv/bin/python scripts/seed_demo.py           # before every demo: resets Rose's memories
 .venv/bin/python scripts/extraction_tests.py --offline   # free checks of the extraction code
+.venv/bin/python scripts/review_tests.py        # confirm, reject, cancel against the database (own test patient)
 .venv/bin/python -m uvicorn app.main:app --reload
 ```
 
@@ -63,6 +69,11 @@ in `backend/.env` and restart. See decision 16.
 | `backend/app/voice/reminders.py` | **Step 4:** one guard so all-day plans get no timed reminder (decision 25; voice-owned file) |
 | `frontend/src/api.ts`, `pages/patient/PatientPage.tsx`, `pages/care/MemoriesPage.tsx` | **Step 4:** all-day plans show a day without a time (decision 25; interface-owned files) |
 | `backend/scripts/extraction_tests.py` | **New (step 4).** Offline and live extraction tests (decision 37) |
+| `backend/app/store.py`, `backend/app/memory/routes.py` | **Step 5:** `pending_memories`, `confirm_memory`, `reject_memory`, `cancel_memory`, `Conflict`; four staff endpoints (decisions 40 to 44) |
+| `backend/app/memory/schema.sql` | **Step 5:** the `cancelled` status (decision 39) |
+| `frontend/src/api.ts` | **Step 5:** typed client functions for the review API (decision 45) |
+| `backend/scripts/review_tests.py` | **New (step 5).** 36 checks against the database (decision 46) |
+| `backend/scripts/safety_tests.py` | **Step 5:** `cancelled` added to the never-spoken memory-rule check |
 
 ## Decisions
 
@@ -495,6 +506,162 @@ so the frontend could be type-checked and linted.
 - *Implications:* none for git. `npm run build` and `npm run lint` both pass. The chunk-size
   warning was already there.
 
+### Step 5: review (confirm, reject, cancel)
+
+Decided with the team lead before building: backend only (the Interface owner builds the cards),
+certainty is the only thing staff change before confirming, and a new `cancelled` status.
+
+**39. A new `cancelled` status** for plans staff remove.
+- *Why:* extraction ignores cancellations on purpose (decision 36), so without this a cancelled
+  appointment would keep being spoken.
+- *How:* the status check is dropped and re-added with one more value. It's named
+  `memories_status_check` both live and on a new database, so this is safe to re-run.
+- *Why not reuse `rejected`:* receipts would then say a plan the caregiver confirmed was rejected,
+  which reads as if it was wrong all along.
+- *Implications:*
+  - A cancelled memory is kept, never deleted: receipts of past answers still show it.
+  - `build_facts`, the patient screen, and reminders only use confirmed and tentative memories, so
+    they drop it without any change.
+  - There's no record of *when* it was cancelled yet.
+
+**40. Confirming happens in one transaction.**
+- *What changes:*
+  - The status becomes `tentative` if the certainty is tentative, otherwise `confirmed`, and
+    `confirmed_at` is set.
+  - For an update, the version it replaces becomes `superseded` at the same moment, so there's
+    always exactly one current version.
+- *Locking:* the pending memory is locked first, then the old version.
+  - Two competing updates queue on the old version, and the second finds it already superseded.
+  - It then gets 409 "The plan this changes was already changed or cancelled. Reject this one, or
+    say it again" instead of forking the chain.
+  - The no-fork index (decision 10) is a second guard; a `UniqueViolation` from it also becomes 409.
+- *Implications:*
+  - Confirming is visible immediately: on the agent's next lookup (it's live), and on the patient
+    screen and in reminders within 15 seconds.
+  - A confirmed update gets a new memory ID, so its reminders are new (the screen remembers played
+    reminders by memory ID).
+
+**41. Certainty is the only thing staff change before confirming.**
+- *How:* `POST /memories/{id}/confirm` takes an optional `{"certainty": "definite" | "tentative"}`.
+- *Why:* editing dates, names, or times would need the same checks extraction runs (timezone,
+  pickup before start). The cards already show the resolved time and the warnings, so a mistake is
+  visible.
+- *Implications:* anything else wrong means reject, then say it again correctly. An edit form can
+  come later, reusing `extraction.validate()`.
+
+**42. Reject and cancel keep the row; each action only works from the right state.**
+
+| Action | Allowed from | Otherwise |
+|---|---|---|
+| reject | `pending` | 409: "It's already confirmed: cancel it instead." (or "already {status}") |
+| cancel | `confirmed`, `tentative` | 409: "It isn't confirmed yet: reject it instead." / "Only the current version can be cancelled." |
+
+- *Why:* every memory a caregiver ever saw stays in the database with its final status. That's an
+  audit trail, and receipts can always explain a past answer.
+- *Implications:* the 409 messages are written to be shown to staff as they are.
+
+**43. The review list explains itself.**
+- *What `GET /memories/pending` adds to each memory:*
+  - `warnings`: what extraction flagged for that memory;
+  - `replaces`: the current memory an update would replace;
+  - `stale`: true when that memory was already changed or cancelled, so this one can only be
+    rejected.
+- *How the warnings are linked:* `finish_session` now writes each new memory's ID into its
+  session's `extraction["kept"]` entry, so warnings match by ID, not by summary text. Memories
+  extracted before this change show no warnings.
+- *Implications:* a card can show "Changes: pickup 2:30 → 2:00" from `replaces`, and "Already
+  changed: reject" from `stale`.
+
+**44. The review endpoints work like the extraction endpoint.**
+- *Access:* staff only (`X-Staff-Pin`), scoped to the patient. Another patient's memory is a 404,
+  not a 409, so IDs can't be probed.
+- *Inputs:* IDs are typed as UUIDs, so anything else is a 422 before any query.
+- *Without the database:* 503.
+- *For tests:* the routes read `PATIENT_ID` when called, so `review_tests.py` can point them at its
+  own patient.
+
+**45. Backend only: the Interface owner builds the cards.**
+- *Why:* that's the Interface owner's area in `Responsibility.md`.
+- *What this step adds instead:* typed functions in `frontend/src/api.ts` (`submitTranscript`,
+  `listPendingMemories`, `confirmMemory`, `rejectMemory`, `cancelMemory`, plus the `PendingMemory`
+  and `ExtractionResult` types) and the contract below.
+- *Implications:*
+  - Nothing renders these yet.
+  - The Memories page still lists current memories with "Remind now", and its "Showing sample
+    data" note is out of date.
+
+**46. Tests: `backend/scripts/review_tests.py`** (36 checks, real database, no Gemini).
+- *Isolation:* its own `test-review` patient, created at the start and deleted at the end (also
+  after a crash, and at the start of the next run). The demo patient is never touched.
+- *Realism:* pending memories are made the way extraction makes them (`extraction.validate`, then
+  `store.finish_session`).
+- *What it covers:*
+  - confirm, including tentative and updates;
+  - competing updates and `stale`;
+  - reject, cancel, and every refused transition;
+  - receipts still finding cancelled and superseded versions;
+  - another patient's memory staying untouched;
+  - the endpoints' 200, 401, 404, 409, and 422 answers.
+
+## API for the Interface owner
+
+All of these need the `X-Staff-Pin` header; the `request()` helper in `api.ts` adds it. Times are
+ISO 8601 with an offset. **If `all_day` is true, show only the day:** `event_at` is that day's
+midnight, not a real time.
+
+**`submitTranscript(text)`: `POST /sessions/transcript`** (step 4, takes a few seconds)
+```json
+{"session_id": "…",
+ "candidates": [{"id": "…", "summary": "Eye doctor appointment", "status": "pending", "warnings": [], "…": "…"}],
+ "dropped": [{"summary": "Blood pressure pill", "reason": "medicine is never saved as a memory"}]}
+```
+
+**`listPendingMemories()`: `GET /memories/pending`**
+```json
+{"pending": [{
+  "id": "6f1c…", "kind": "appointment", "summary": "Dentist appointment",
+  "event_at": "2026-10-11T15:00:00-04:00", "all_day": false,
+  "details": {"who": "Anna", "pickup_at": "2026-10-11T14:00:00-04:00"},
+  "status": "pending", "certainty": "definite", "source": "caregiver_typed",
+  "source_quote": "Change of plans, Anna will pick her up at two instead.",
+  "session_id": "…", "supersedes_id": "3b67…", "created_at": "…", "confirmed_at": null,
+  "warnings": [],
+  "replaces": {"id": "3b67…", "summary": "Dentist appointment", "event_at": "2026-10-11T15:00:00-04:00",
+               "all_day": false, "details": {"who": "Anna", "pickup_at": "2026-10-11T14:30:00-04:00"},
+               "status": "confirmed"},
+  "stale": false}]}
+```
+
+**`confirmMemory(id, certainty?)`, `rejectMemory(id)`, `cancelMemory(id)`:**
+`POST /memories/{id}/confirm` (optional body `{"certainty": "tentative"}`), `/reject`, `/cancel`.
+Each returns the updated memory.
+
+**What a review card should show:**
+- The summary, and when: the day and time, or the day only for `all_day`. Use the patient's words
+  for days ("tomorrow", "on Saturday"), like `whenWords()` in `PatientPage.tsx`.
+- Who, the pickup time, and the place, from `details`.
+- The caregiver's exact words (`source_quote`). Seeing them is the point of confirming.
+- Every warning, prominently. They're full sentences.
+- For an update (`replaces` set): what changes from the current version. If `stale` is true, say
+  "Already changed. Reject this one" and disable Confirm.
+- A definite / not certain toggle, preset from `certainty`, then **Confirm** and **Reject**.
+
+**Elsewhere on the page:**
+- A box for what a caregiver said, calling `submitTranscript`. Show `dropped` with its reasons, so
+  staff know why something wasn't saved.
+- **Cancel** on each current plan (from `getCurrentMemories()`), with a confirmation dialog.
+- Remove the "Showing sample data" note.
+
+**Errors:** show `detail` as it is. The messages are written for staff.
+
+| Code | Meaning |
+|---|---|
+| 409 | the memory changed state (already confirmed, already changed, reject instead…) |
+| 503 | no database, or Gemini's limit with a "try again in about…" wait |
+| 404 | the memory is gone |
+
+After any action, reload the pending list and the current memories.
+
 ## Live extraction results so far
 
 On the free tier, the live set has been run in pieces (Saturday, October 10, 2026).
@@ -529,6 +696,12 @@ On the free tier, the live set has been run in pieces (Saturday, October 10, 202
   - fallback data stays the same across calls.
 - **Safety suite:** all 6 memory-rule checks pass. The agent conversations weren't re-run (they
   cost ElevenLabs credits, and their input text is unchanged).
+- **Step 5:**
+  - `review_tests.py` passes 36 of 36 against the database, and cleans up its test patient.
+  - The `cancelled` status change was dry-run, applied, and re-run.
+  - Nothing else regressed: the offline extraction checks (24/24), the memory-rule checks (7/7,
+    now including `cancelled`), the step 1–3 endpoint checks with and without the database, the
+    step 4 failure-path checks, and the frontend build and lint.
 
 ## Known issues and follow-ups
 
@@ -542,20 +715,23 @@ On the free tier, the live set has been run in pieces (Saturday, October 10, 202
 - **The tentative test has an odd time.** Its hand-written facts put Anna's visit at 11 AM, but the
   simulated time is 1:20 PM. It's left as is so results stay comparable; fix it at the next paid
   run.
-- **The staff Memories page** still says "Showing sample data". The data is real now, but seeded.
-  That's for the Interface owner.
+- **The staff Memories page** has no review cards yet, and still says "Showing sample data". Both
+  are for the Interface owner (see "API for the Interface owner").
+- **No record of when a plan was cancelled.** Only its status changes.
+- **Duplicate pending proposals aren't merged.** Saying the same change twice makes two cards.
+  Confirming one makes the other `stale`.
 - **A harmless warning:** `StarletteDeprecationWarning` from FastAPI's test client.
 
-## Next: step 5
+## Next
 
-Step 4 (extraction) is described in decisions 25 to 38 above.
+Steps 4 and 5 are described in decisions 25 to 46 above.
 
-**Step 5.** Confirm and reject endpoints (staff only):
-- *Confirm* sets `status` from `certainty` and sets `confirmed_at`. For updates, it marks the old
-  version `superseded` in the same transaction, and maps `UniqueViolation` to 409.
-- *Reject* sets `rejected`.
-- *UI:* minimal Confirm/Reject cards on the staff Memories page, showing the resolved time, the
-  caregiver's exact words, and the warnings from extraction, plus a box to type what a caregiver
-  said (it calls `POST /sessions/transcript`).
-- *Also needed:* a staff-only list of pending memories (`GET /memories/pending`), and a way for
-  staff to retire a confirmed memory, since extraction ignores cancellations (decision 36).
+1. **Interface owner:** the review cards and the transcript box, from the contract above.
+2. **Pull request from `TrackB_Memory` to `main`.** It touches a few voice and frontend files (see
+   "What changed"), so review it together.
+3. **Once Gemini billing is decided:**
+   - run the 11 remaining live extraction cases (command under "Live extraction results so far");
+   - run one end-to-end check: a transcript becomes a pending memory, confirm it, and it appears
+     in `/voice/facts`.
+4. **Tiger Data showcase:** move interactions into the hypertable, and add `GET /dashboard` with the
+   hourly repetition counts.

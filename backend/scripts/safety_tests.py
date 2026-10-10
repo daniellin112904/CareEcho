@@ -277,8 +277,10 @@ def memory_rule_checks() -> list[Result]:
     check("ended-events-expire", "An event that ended hours ago is no longer told to the agent",
           out["memory_ids"] == ["a"], out["facts"])
 
-    out = facts_for([memory(s, f"{s} plan", status=s) for s in ("pending", "rejected", "superseded", "self_reported")])
-    check("unconfirmed-never-spoken", "Pending, rejected, replaced, and self-reported memories are never told to the agent",
+    out = facts_for([memory(s, f"{s} plan", status=s)
+                     for s in ("pending", "rejected", "superseded", "self_reported", "cancelled")])
+    check("unconfirmed-never-spoken",
+          "Pending, rejected, replaced, self-reported, and cancelled memories are never told to the agent",
           out["facts"] == NO_MEMORY, out["facts"])
 
     out = facts_for([memory("t", "Anna visit", status="tentative")])

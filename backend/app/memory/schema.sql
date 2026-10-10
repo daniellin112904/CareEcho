@@ -94,3 +94,9 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS extraction JSONB;
 -- A plan with a day but no time ("Anna might visit Saturday"). Its event_at is local midnight
 -- of that day, and it's never told with a clock time
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS all_day BOOLEAN NOT NULL DEFAULT false;
+
+-- A plan staff cancelled: kept so receipts of past answers still show it, never spoken again.
+-- Re-adds the status check from CREATE TABLE (same name on a new database) with one more value
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS memories_status_check;
+ALTER TABLE memories ADD CONSTRAINT memories_status_check CHECK (status IN
+  ('pending', 'confirmed', 'tentative', 'superseded', 'rejected', 'self_reported', 'cancelled'));
