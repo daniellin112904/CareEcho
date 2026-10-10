@@ -48,9 +48,33 @@ Safety:
 - If something new happens (another symptom, it gets worse), call raise_urgent_alert again with the new words.
 - Never guess what is wrong.
 
+Language:
+- Many people with memory loss find their first language easiest. The moment {{patient_name}} speaks Spanish or Mandarin Chinese, call language_detection first, before any other tool, then reply only in that language until they switch back. Never answer Spanish or Chinese in English.
+- The facts from get_memories are in English. Translate them, but keep names, places, and times exactly as written: never change a fact while translating.
+- Every rule above applies in every language, especially Medicine and Safety.
+
 If asked who you are, say you are Vela, a computer helper who talks with them. Never claim to be a family member or a real person, even if your voice sounds familiar."""
 
 FIRST_MESSAGE = "Hi {{patient_name}}, it's Vela. What would you like to talk about?"
+
+# First-language mode: English by default; the agent switches when the patient speaks one of
+# these. ElevenLabs requires an English-only speech model for English, so each other language
+# switches to the multilingual one.
+MULTILINGUAL_TTS = {"model_id": "eleven_flash_v2_5"}
+LANGUAGE_PRESETS = {
+    "es": {
+        "overrides": {
+            "agent": {"first_message": "Hola {{patient_name}}, soy Vela. ¿De qué te gustaría hablar?"},
+            "tts": MULTILINGUAL_TTS,
+        }
+    },
+    "zh": {
+        "overrides": {
+            "agent": {"first_message": "{{patient_name}}，你好，我是 Vela。你想聊些什么？"},
+            "tts": MULTILINGUAL_TTS,
+        }
+    },
+}
 
 PLACEHOLDERS = {
     "patient_name": "Rose",
@@ -60,6 +84,12 @@ PLACEHOLDERS = {
 
 # Built-in ElevenLabs tools: hang up after a goodbye, and stay silent instead of filling a pause
 BUILT_IN_TOOLS = {
+    "language_detection": {
+        "type": "system",
+        "name": "language_detection",
+        "description": "Switch to the language the patient is speaking (English, Spanish, or Mandarin).",
+        "params": {"system_tool_type": "language_detection"},
+    },
     "end_call": {
         "type": "system",
         "name": "end_call",
@@ -100,20 +130,20 @@ CLIENT_TOOLS = [
     _client_tool(
         "ask_caregiver",
         "Ask the care team a question you couldn't answer from get_memories. They see it as an alert.",
-        {"question": "The patient's question, in their words"},
+        {"question": "The patient's question, in English (translate it if they spoke another language)"},
     ),
     _client_tool(
         "log_patient_statement",
         "Record something the patient says they did. It's saved as self-reported, never as a fact.",
         {
-            "text": "What they said, in their words",
+            "text": "What they said, in English (translate it if they spoke another language)",
             "kind": "One of: medication, meal, activity, feeling, other",
         },
     ),
     _client_tool(
         "raise_urgent_alert",
         "Alert the care team right away: the patient fell, is hurt, has chest pain or trouble breathing, is lost, or asks for urgent help.",
-        {"reason": "What the patient said, in their words"},
+        {"reason": "What the patient said, in English (translate it if they spoke another language)"},
     ),
 ]
 # Questions and answers aren't a tool: the patient page logs them from the transcript,
@@ -123,9 +153,19 @@ AGENT_CONFIG = {
     "agent": {
         "first_message": FIRST_MESSAGE,
         "language": "en",
-        "prompt": {"prompt": PROMPT, "temperature": 0.2, "built_in_tools": BUILT_IN_TOOLS, "tools": CLIENT_TOOLS},
+        # Built-in tools go in the same list as the client tools: when both were sent
+        # separately, ElevenLabs kept the client tools and silently dropped the built-in ones
+        "prompt": {
+            "prompt": PROMPT,
+            # Fast, and follows tool rules (look up first, switch language first) more reliably
+            # than the default model did in the simulated tests
+            "llm": "gemini-3.5-flash",
+            "temperature": 0.2,
+            "tools": [*CLIENT_TOOLS, *BUILT_IN_TOOLS.values()],
+        },
         "dynamic_variables": {"dynamic_variable_placeholders": PLACEHOLDERS},
     },
+    "language_presets": LANGUAGE_PRESETS,
     "turn": {
         # Older adults can need long pauses to answer; 7 seconds made the agent talk over them
         "turn_timeout": 20,

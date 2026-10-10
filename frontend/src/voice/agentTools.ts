@@ -6,16 +6,87 @@ const KINDS: StatementKind[] = ["medication", "meal", "activity", "feeling", "ot
 // instead of answering from nothing
 const LOOKUP_FAILED = "NO_MEMORY: the memory list couldn't be loaded. Say you are not sure right now.";
 
+// Phrases in English and Spanish, as whole words. JavaScript's \b doesn't know accented
+// letters ("me caí"), so Unicode letter lookarounds mark the word edges instead.
+function phrases(list: string[]) {
+  return new RegExp(String.raw`(?<!\p{L})(${list.join("|")})(?!\p{L})`, "iu");
+}
+
+// Mandarin has no spaces between words, so its phrases match anywhere
+function mandarin(list: string[]) {
+  return new RegExp(list.join("|"));
+}
+
+function matches(patterns: RegExp[], text: string) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
 // An answer that promises to find out. If the agent says this without calling ask_caregiver,
 // the alert is raised anyway, so a promise made to the patient is always passed on.
-const PROMISED_TO_ASK =
-  /\b(not sure|don['’]t know|do not know|i['’]ll ask|i will ask|find out|ask(ed)? (the|your) care team)\b/i;
+const PROMISED_TO_ASK = [
+  phrases([
+    "not sure",
+    "don['’]t know",
+    "do not know",
+    "i['’]ll ask",
+    "i will ask",
+    "find out",
+    "ask(ed)? (the|your) care team",
+    "no estoy segur[oa]",
+    "no (lo )?s[eé]",
+    "preguntar[eé]",
+    "he preguntado",
+    "voy a preguntar",
+    "averiguar",
+    "equipo de cuidado",
+  ]),
+  mandarin(["不确定", "不知道", "我会问", "问一下", "护理团队", "照护团队"]),
+];
 
 // Backup for emergencies: if the patient says one of these, the urgent alert goes out from
 // the page itself, even if the agent misses it. Phrases, not single words, so "help me
 // remember" or "a fall concert" don't set it off.
-const EMERGENCY =
-  /\b(i fell|i['’]ve fallen|i have fallen|fell down|can['’]?not get up|can['’]t get up|chest pain|my chest hurts|can['’]t breathe|cannot breathe|hard to breathe|i['’]m bleeding|i am bleeding|i['’]m hurt|i am hurt|hurt myself|i['’]m lost|i am lost|heart attack|call (an )?ambulance|call 911)\b/i;
+const EMERGENCY = [
+  phrases([
+    "i fell",
+    "i['’]ve fallen",
+    "i have fallen",
+    "fell down",
+    "can['’]?not get up",
+    "can['’]t get up",
+    "chest pain",
+    "my chest hurts",
+    "can['’]t breathe",
+    "cannot breathe",
+    "hard to breathe",
+    "i['’]m bleeding",
+    "i am bleeding",
+    "i['’]m hurt",
+    "i am hurt",
+    "hurt myself",
+    "i['’]m lost",
+    "i am lost",
+    "heart attack",
+    "call (an )?ambulance",
+    "call 911",
+    "me ca[ií]",
+    "me he ca[ií]do",
+    "no puedo levantarme",
+    "me duele el pecho",
+    "dolor (en el|de) pecho",
+    "no puedo respirar",
+    "me cuesta respirar",
+    "estoy sangrando",
+    "estoy herid[oa]",
+    "me lastim[eé]",
+    "estoy perdid[oa]",
+    "me perd[ií]",
+    "(llama|llamen|llamar) (a )?(una )?ambulancia",
+    "llama al 911",
+    "ataque al coraz[oó]n",
+  ]),
+  mandarin(["摔倒", "跌倒", "起不来", "胸口痛", "胸口疼", "胸痛", "喘不过气", "呼吸困难", "不能呼吸", "流血", "受伤", "迷路", "救护车", "心脏病"]),
+];
 
 type Turn = {
   question: string;
@@ -67,7 +138,7 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
   // A turn is logged once the next question starts (or the conversation ends), so the
   // whole answer and any "I'll ask the care team" are known by then
   function flush() {
-    if (turn && !turn.askedCaregiver && PROMISED_TO_ASK.test(turn.answer.join(" "))) {
+    if (turn && !turn.askedCaregiver && matches(PROMISED_TO_ASK, turn.answer.join(" "))) {
       turn.askedCaregiver = true;
       raiseAlert("missing_info", `${patientName} asked: "${turn.question}"`).catch((err) =>
         console.warn("Backup alert failed", err),
@@ -92,7 +163,7 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
     if (!text || /^\.+$/.test(text)) return;
     if (role === "user") {
       urgent = null;
-      if (EMERGENCY.test(text)) {
+      if (matches(EMERGENCY, text)) {
         raiseUrgent(text).then((id) => {
           if (id) hooks.tellAgent(`The care team has just been alerted that ${patientName} may need help.`);
         });

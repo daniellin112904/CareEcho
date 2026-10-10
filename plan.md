@@ -153,11 +153,33 @@ memory teammate are marked *(Memory)*; until they exist, the tool handlers use m
   placeholder. The real query should also return superseded versions, so an old receipt still
   shows the version that was true when the answer was given.
 
-### M5. First-language mode (about 1 h)
-- [ ] Switch the agent's speech model to `eleven_flash_v2_5` (`eleven_flash_v2` is English only)
-- [ ] Turn on Spanish and Mandarin, plus ElevenLabs' language detection tool
-- [ ] Prompt: reply in the language Rose uses; keep names, times, and facts exactly as written in memory
-- [ ] Demo line: "¿A qué hora viene Anna?" gets the same answer, in Spanish
+### M5. First-language mode ✅ done
+- [x] Spanish and Mandarin switch to the multilingual speech model `eleven_flash_v2_5` (English must stay on `eleven_flash_v2`, ElevenLabs rule)
+- [x] Spanish and Mandarin turned on, plus ElevenLabs' language detection tool
+- [x] Prompt: reply in the language Rose uses; keep names, times, and facts exactly as written in memory
+- [x] Demo line: "¿A qué hora viene Anna?" gets the same answer, in Spanish
+
+**How it works**
+- **Switching.** English is the default. When Rose speaks Spanish or Mandarin, the agent calls
+  ElevenLabs' `language_detection` tool first, which switches the conversation (speech
+  recognition, voice model, and replies) to that language until she switches back.
+- **Same facts in every language.** Memories stay in English. The agent translates them but keeps
+  names, places, and times exactly as written, and every Medicine and Safety rule applies in every
+  language. Alerts and logs reach staff in English (the tools ask for a translation).
+- **Safety backups in three languages.** The emergency phrases ("me caí", "我摔倒了") and the
+  "promised to ask" phrases are matched in English, Spanish, and Mandarin. Spanish needed
+  Unicode-aware word edges (JavaScript's `` breaks on accented letters like "í"). Checked on 23
+  sample sentences, including ones that must not trigger ("Caímos en la cuenta", "fall leaves").
+- **Model change: `gemini-3.5-flash`.** With the default model the agent answered Mandarin in
+  English and once said it had asked the care team without doing it. Gemini Flash switched
+  language first every time and passed every earlier test again (medicine, emergency, pickup).
+  It also counts toward the Gemini track. Check voice speed on the real demo; switch back by
+  deleting the `llm` line in `app/voice/agent.py`.
+- **Bug found and fixed.** Since M2, "end call" and "skip turn" had been silently off: ElevenLabs
+  drops built-in tools when client tools are sent in a separate list. They now go in the same
+  list, and the agent hangs up on "goodbye" again.
+- **Tested** with simulated conversations in Spanish (pickup, pills, a fall, goodbye) and Mandarin
+  (pickup, the dog question, goodbye).
 
 ### M6. Safety test suite (about 2 h, off the demo path)
 - [ ] `backend/scripts/safety_tests.py`: 20 text-only conversations with the agent (check the
@@ -167,5 +189,6 @@ memory teammate are marked *(Memory)*; until they exist, the tool handlers use m
 - [ ] Writes `docs/safety-report.md`; the pass count goes in the README and Devpost
 
 ### Later, if there's time
+- Patient screen in the patient's language (date, "Talk to me", cards), set by staff
 - Breathe with the orb (the orb leads slow breathing when Rose is anxious)
 - Kiosk polish: full screen, keep the screen awake
