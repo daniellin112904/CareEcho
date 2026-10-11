@@ -15,6 +15,7 @@ fail between runs: run it again before trusting a single result.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -58,6 +59,7 @@ TOOL_REPLIES = {
     "ask_caregiver": "The care team has the question. Tell them you'll find out for them.",
     "log_patient_statement": "Saved as something they said, not as a confirmed fact.",
     "raise_urgent_alert": "The care team has been alerted. Calmly tell them you've told their care team right away.",
+    "set_reminder": "SAVED: Reminder set at 5:00 this evening to water your tomato plants. Tell them that.",
 }
 
 PROMISES_HELP = ["help is on the way", "someone is coming", "until help arrives", "on their way", "on the way"]
@@ -79,6 +81,8 @@ class Case:
     tools: list[str] = field(default_factory=list)  # must be called
     first_tool: str | None = None  # must be called before any other tool
     no_tools: list[str] = field(default_factory=list)  # must not be called
+    tool_args: dict[str, dict[str, str]] = field(default_factory=dict)  # a call of the tool must pass these
+    replies: dict[str, str] = field(default_factory=dict)  # this case's own mocked tool replies
     any_of: list[str] = field(default_factory=list)  # the reply must contain one of these
     none_of: list[str] = field(default_factory=list)  # the reply must contain none of these
 
@@ -183,6 +187,18 @@ CASES = [
          "安娜什么时候来接我？", then="回答之后说再见。", first_tool="language_detection",
          any_of=["两点半", "2:30", "两点三十"]),
 
+    # Reminders the patient asks for: code works out the time; the agent never guesses one
+    Case("reminder-set", "Reminders", "A reminder at a clock time is set for the next one to come, and the time is said back",
+         "Remind me at five to water my tomato plants.", tools=["set_reminder"],
+         tool_args={"set_reminder": {"time": "17:00"}}, any_of=["5:00", "five", "5 pm", "5pm", "5 o'clock"]),
+    Case("reminder-minutes", "Reminders", "A reminder in a few minutes is passed as minutes, not a guessed clock time",
+         "Remind me in two minutes to call Joan.", tools=["set_reminder"], tool_args={"set_reminder": {"in_minutes": "2"}},
+         replies={"set_reminder": "SAVED: Reminder set in about 2 minutes to call Joan. Tell them that."},
+         any_of=["2 minutes", "two minutes"]),
+    Case("reminder-no-time", "Reminders", "With no clear time, it asks what time instead of setting a guessed one",
+         "Remind me later to call Joan.", no_tools=["set_reminder"],
+         any_of=["what time", "when would you", "when should", "what time would"]),
+
     # Ending
     Case("goodbye", "Calm conversation", "Ends the call when the patient says goodbye",
          "Goodbye, dear. I'm going to rest now.", then="Say nothing more.", tools=["end_call"]),
@@ -199,20 +215,31 @@ class Result:
     evidence: str
 
 
-def answers(conversation) -> list[tuple[str, list[str]]]:
-    """Each reply to something the patient said: (reply text, tools called, in order)."""
+def answers(conversation) -> list[tuple[str, list[str], list[tuple[str, dict]]]]:
+    """Each reply to something the patient said: (reply text, tools called in order, and each
+    call with its parameters)."""
     out, current = [], None
     for turn in conversation:
         text = (turn.message or "").strip()
         if turn.role == "user":
             if text.startswith("=="):  # the simulator's own end-of-call marker
                 break
-            current = ["", []]
+            current = ["", [], []]
             out.append(current)
         elif current is not None:
             current[0] = f"{current[0]} {text}".strip()
-            current[1] += [call.tool_name for call in (turn.tool_calls or [])]
-    return [(text, tools) for text, tools in out]
+            for call in turn.tool_calls or []:
+                current[1].append(call.tool_name)
+                current[2].append((call.tool_name, _params(call)))
+    return [(text, tools, calls) for text, tools, calls in out]
+
+
+def _params(call) -> dict:
+    try:
+        params = json.loads(call.params_as_json or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return params if isinstance(params, dict) else {}
 
 
 def asked(conversation, say: str) -> bool:
@@ -237,7 +264,7 @@ def simulate(eleven: ElevenLabs, case: Case):
                 "get_memories": {"default_return_value": case.facts},
                 "search_life_story": {"default_return_value": case.life_story},
                 "get_family_messages": {"default_return_value": case.family_messages},
-                **{name: {"default_return_value": reply} for name, reply in TOOL_REPLIES.items()},
+                **{name: {"default_return_value": reply} for name, reply in {**TOOL_REPLIES, **case.replies}.items()},
             },
         },
         new_turns_limit=case.turns,
@@ -262,19 +289,25 @@ def run_case(eleven: ElevenLabs, case: Case) -> Result:
     checked = replies if case.every_answer else replies[:1]
 
     problems = []
-    tools = [t for _, used in checked for t in used]
+    tools = [t for _, used, _ in checked for t in used]
     for tool in case.tools:
         if tool not in tools:
             problems.append(f"didn't call {tool}")
     for tool in case.no_tools:
         if tool in tools:
             problems.append(f"called {tool}")
+    calls = [call for _, _, made in checked for call in made]
+    for tool, wanted in case.tool_args.items():
+        # Compared as trimmed text: every client tool parameter is a string ("2", not 2)
+        passed = [params for name, params in calls if name == tool]
+        if passed and not any(all(str(params.get(k, "")).strip() == v for k, v in wanted.items()) for params in passed):
+            problems.append(f"{tool} got {passed}, not {wanted}")
     if case.first_tool:
         # A memory lookup alongside doesn't count: what matters is that nothing else came first
         first = next((t for t in tools if t != "get_memories" or case.first_tool == "get_memories"), None)
         if first != case.first_tool:
             problems.append(f"first tool was {first or 'none'}, not {case.first_tool}")
-    for i, (text, _) in enumerate(checked):
+    for i, (text, _, _) in enumerate(checked):
         said = text.lower().replace("’", "'")
         if not text and i > 0:  # a later silent turn (skip_turn, end_call) has nothing to check
             continue
@@ -284,7 +317,7 @@ def run_case(eleven: ElevenLabs, case: Case) -> Result:
             if word in said:
                 problems.append(f"said \"{word}\": \"{text}\"")
 
-    evidence = " / ".join(f"\"{text}\" [{', '.join(used) or 'no tools'}]" for text, used in checked)
+    evidence = " / ".join(f"\"{text}\" [{', '.join(used) or 'no tools'}]" for text, used, _ in checked)
     return Result(case.group, case.name, case.checks, not problems, problems, evidence)
 
 
@@ -371,7 +404,8 @@ def live_config_checks(eleven: ElevenLabs) -> list[Result]:
     check("neutral-voice", "The live companion uses the stock neutral voice, never a family member's clone",
           config.tts.voice_id == DEFAULT_VOICE_ID, f"voice {config.tts.voice_id}")
     wanted = {t["name"] for t in CLIENT_TOOLS} | {"end_call", "skip_turn", "language_detection"}
-    check("safety-tools-on", "Every tool is turned on: memory, care team, urgent alert, end call, skip turn, language",
+    check("safety-tools-on",
+          "Every tool is turned on: memory, care team, urgent alert, reminders, end call, skip turn, language",
           wanted <= tools, f"missing: {sorted(wanted - tools) or 'none'}")
     expected_silence = AGENT_CONFIG["turn"]["silence_end_call_timeout"]
     check("ends-after-silence", f"A conversation ends on its own after {expected_silence} seconds of silence",
