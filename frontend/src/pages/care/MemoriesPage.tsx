@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   cancelMemory,
+  cancelPatientReminder,
   confirmMemory,
   getCurrentMemories,
   getMemoryHistory,
+  getPatient,
+  listPatientReminders,
   listPendingMemories,
   listSessions,
   rejectMemory,
@@ -24,6 +27,9 @@ export default function MemoriesPage() {
   const [error, setError] = useState("");
   const [sent, setSent] = useState<Record<string, string>>({});
   const [sessions, setSessions] = useState<CaregiverSession[] | null>(null);
+  const [asked, setAsked] = useState<Memory[] | null>(null);
+  const [askedError, setAskedError] = useState("");
+  const [patientName, setPatientName] = useState<string | null>(null);
 
   // After any action both lists change: a confirmed update replaces the current version
   const reload = useCallback(() => {
@@ -39,6 +45,15 @@ export default function MemoriesPage() {
     listSessions()
       .then((data) => setSessions(data.sessions))
       .catch(() => setSessions(null));
+    listPatientReminders()
+      .then((data) => {
+        setAsked(data.reminders);
+        setAskedError("");
+      })
+      .catch((err: Error) => setAskedError(err.message));
+    getPatient()
+      .then((data) => setPatientName(data.name))
+      .catch(() => {});
   }, []);
 
   useEffect(reload, [reload]);
@@ -115,6 +130,8 @@ export default function MemoriesPage() {
           ))}
         </ul>
       </section>
+
+      <AskedReminders name={patientName} reminders={asked} error={askedError} onDone={reload} />
 
       {sessions && sessions.length > 0 && <RecentNotes sessions={sessions} />}
     </>
@@ -275,6 +292,65 @@ function ReviewCard({ memory, onDone }: { memory: PendingMemory; onDone: () => v
         </button>
       </div>
     </li>
+  );
+}
+
+/** Reminders the patient asked Vela for, in her own words. Said once at their time, never as facts. */
+function AskedReminders({
+  name,
+  reminders,
+  error,
+  onDone,
+}: {
+  name: string | null;
+  reminders: Memory[] | null;
+  error: string;
+  onDone: () => void;
+}) {
+  const [cancelError, setCancelError] = useState("");
+  const who = name ?? "the patient";
+
+  async function cancel(reminder: Memory) {
+    if (!window.confirm(`Cancel the reminder to "${reminder.summary}"? Vela won't say it.`)) return;
+    try {
+      await cancelPatientReminder(reminder.id);
+      setCancelError("");
+    } catch (err) {
+      setCancelError((err as Error).message);
+    }
+    onDone();
+  }
+
+  return (
+    <section className="care-section">
+      <h2>{name ? `${name}'s own reminders` : "The patient's own reminders"}</h2>
+      <p className="care-lede">
+        Reminders {who} asked Vela for. Each is said once, at its time. They aren't plans, so Vela never tells them as
+        facts.
+      </p>
+      {error && <p className="care-error">{error}</p>}
+      {cancelError && <p className="care-error">{cancelError}</p>}
+      {reminders && reminders.length === 0 && <p className="care-notice">No upcoming reminders.</p>}
+      {reminders && reminders.length > 0 && (
+        <ul className="memory-list">
+          {reminders.map((r) => (
+            <li key={r.id} className="review-card">
+              <div className="alert-head">
+                <span className="memory-status">Set by {who}</span>
+                {r.event_at && <span className="memory-when">{formatWhen(r)}</span>}
+              </div>
+              <p className="alert-message">{r.summary}</p>
+              {r.source_quote && <blockquote className="receipt-quote">"{r.source_quote}"</blockquote>}
+              <div className="toast-actions">
+                <button className="care-quiet" onClick={() => cancel(r)}>
+                  Cancel reminder
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
