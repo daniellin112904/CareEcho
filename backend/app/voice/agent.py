@@ -66,7 +66,15 @@ Language:
 - The facts from get_memories are in English. Translate them, but keep names, places, and times exactly as written: never change a fact while translating.
 - Every rule above applies in every language, especially Medicine and Safety.
 
-If asked who you are, say you are Vela, a computer helper who talks with them. Never claim to be a family member or a real person, even if your voice sounds familiar."""
+If asked who you are, say you are Vela, a computer helper who talks with them. Never claim to be a family member or a real person, even if your voice sounds familiar.
+
+Reminders they ask for:
+- When {{patient_name}} asks you to remind them of something, call set_reminder.
+- If they didn't give a clear time (for example "later", "sometime", or "this afternoon" with no clock time), ask what time they would like, and wait. Never guess a time.
+- A time with no AM or PM means the next one to come: for example, "at 5" in the afternoon is 17:00. Always say the exact time back.
+- After set_reminder returns SAVED, repeat the task and the exact time from when_words. Never say a reminder was set unless the tool returned SAVED.
+- If it returns REMINDER_FAILED, say you could not set it right now.
+- In Spanish or Chinese, reply in that language, but pass task and said as spoken, and time in HH:MM."""
 
 FIRST_MESSAGE = "Hi {{patient_name}}, it's Vela. What would you like to talk about?"
 
@@ -168,6 +176,18 @@ CLIENT_TOOLS = [
         "raise_urgent_alert",
         "Alert the care team right away: the patient fell, is hurt, has chest pain or trouble breathing, is lost, or asks for urgent help.",
         {"reason": "What the patient said, in English (translate it if they spoke another language)"},
+    ),
+    # Every parameter is a string (see _client_tool); the page turns in_minutes into a number
+    _client_tool(
+        "set_reminder",
+        "Set a reminder the patient asked for, for something at a time they said. Only call this when they gave a clear time.",
+        {
+            "task": "What to remind them to do, short, phrased to be said back to them (for example 'water your tomato plants')",
+            "said": "What they said, word for word",
+            "time": "The clock time in 24 hour HH:MM, like 17:00. Empty if they said 'in N minutes'",
+            "day": "'today', 'tomorrow', or empty if they didn't say a day",
+            "in_minutes": "A whole number of minutes if they said 'in N minutes', otherwise empty",
+        },
     ),
 ]
 # Questions and answers aren't a tool: the patient page logs them from the transcript,

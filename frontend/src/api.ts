@@ -43,6 +43,16 @@ export const staffPin = {
   clear: () => sessionStorage.removeItem(PIN_KEY),
 };
 
+/** A failed request: the message is the backend's detail, and status its HTTP code */
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   if (typeof options.body === "string") headers.set("Content-Type", "application/json");
@@ -56,7 +66,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const detail = Array.isArray(body?.detail)
       ? body.detail.map((d: { msg: string }) => d.msg.replace(/^Value error, /, "")).join(". ")
       : body?.detail;
-    throw new Error(detail ?? `${res.status} ${res.statusText}`);
+    throw new ApiError(detail ?? `${res.status} ${res.statusText}`, res.status);
   }
   return (res.status === 204 ? undefined : res.json()) as Promise<T>;
 }
@@ -366,4 +376,37 @@ export function reminderAudioUrl(id: string) {
 
 export function sendReminderNow(memoryId: string) {
   return request<Reminder>("/reminders/now", { method: "POST", body: JSON.stringify({ memory_id: memoryId }) });
+}
+
+// Reminders the patient asks for (the agent's set_reminder tool). Saved as self-reported memories
+// (kind "reminder", source "patient"): said once at their time, never told to the agent as facts.
+
+export type AskedReminder = {
+  /** Said back as "remind you to <task>" */
+  task: string;
+  /** Her words, shown to staff */
+  said: string;
+  /** 24 hour "HH:MM", or null when in_minutes is given */
+  time: string | null;
+  /** "today" or "tomorrow"; null means the next time that clock time comes */
+  day: string | null;
+  in_minutes: number | string | null;
+};
+
+/** 422 when no clear time was given (never saved then) */
+export function setPatientReminder(reminder: AskedReminder) {
+  return request<Memory & { when_words: string }>("/patient/reminders", {
+    method: "POST",
+    body: JSON.stringify(reminder),
+  });
+}
+
+/** Upcoming, not cancelled, soonest first (staff) */
+export function listPatientReminders() {
+  return request<{ reminders: Memory[] }>("/patient/reminders");
+}
+
+/** Kept as cancelled and never said (staff) */
+export function cancelPatientReminder(id: string) {
+  return request<Memory>(`/patient/reminders/${id}/cancel`, { method: "POST" });
 }

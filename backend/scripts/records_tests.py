@@ -235,7 +235,8 @@ def run_without_database(client: TestClient, pin: dict):
                   and len(board["self_reported_today"]) == 1, board)
             result = client.post("/demo/reset", headers=pin).json()
             check("offline: demo reset clears the JSON records",
-                  result["removed"] == {"interactions": 1, "statements": 1, "alerts": 1, "reminders_now": 0}
+                  result["removed"] == {"interactions": 1, "statements": 1, "alerts": 1, "reminders_now": 0,
+                                        "patient_reminders": 0}
                   and client.get("/dashboard", headers=pin).json()["asks_today"] == 0, result)
         finally:
             db.enabled, store.DATA_DIR = real_enabled, real_dir
