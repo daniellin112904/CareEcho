@@ -199,5 +199,15 @@ AGENT_CONFIG = {
 
 TTS_CONFIG = {"voice_id": DEFAULT_VOICE_ID, "model_id": "eleven_flash_v2"}
 
-# Private agent: sessions need a token from our backend, so the agent ID alone is useless
-PLATFORM_SETTINGS = {"auth": {"enable_auth": True}}
+# Private agent: sessions need a token from our backend, so the agent ID alone is useless.
+# The patient screen's language picker sets the starting language, and the greeting in case
+# the language preset doesn't apply (frontend/src/i18n.ts keeps a copy of the greetings).
+# Nothing else may be overridden from the browser.
+PLATFORM_SETTINGS = {
+    "auth": {"enable_auth": True},
+    "overrides": {
+        "conversation_config_override": {
+            "agent": {"language": True, "first_message": True},
+        },
+    },
+}
