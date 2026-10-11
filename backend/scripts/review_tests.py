@@ -204,6 +204,22 @@ def run():
     check("an unknown memory is 404", client.post(f"/memories/{unknown}/reject", headers=pin).status_code == 404)
     r = client.post(f"/memories/{second['id']}/cancel", headers=pin)
     check("cancel through the endpoint (200)", r.status_code == 200 and r.json()["status"] == "cancelled", r.text)
+    r = client.get("/sessions", headers=pin)
+    latest = r.json()["sessions"][0] if r.status_code == 200 and r.json()["sessions"] else {}
+    check("GET /sessions shows the latest note with each memory's status now",
+          latest.get("transcript") == said and latest.get("finished") and latest.get("error") is None
+          and sorted((m["summary"], m["status"]) for m in latest.get("memories", []))
+          == [("Haircut", "tentative"), ("Manicure", "cancelled")] and "raw" not in latest, r.text[:300])
+
+    # 10. The patient: rename, then start over with someone new (life story too, if Snowflake is set up)
+    r = client.put("/patient", json={"name": "  Maria   Lopez "}, headers=pin)
+    check("PUT /patient renames, tidying spaces",
+          r.status_code == 200 and client.get("/patient", headers=pin).json() == {"name": "Maria Lopez"}, r.text)
+    check("a blank name is refused (422)", client.put("/patient", json={"name": "   "}, headers=pin).status_code == 422)
+    r = client.post("/patient/new", json={"name": "Walter"}, headers=pin)
+    check("POST /patient/new: new name, no memories or notes left",
+          r.status_code == 200 and store.patient_name(PATIENT) == "Walter" and not store.current_memories(PATIENT)
+          and client.get("/sessions", headers=pin).json()["sessions"] == [], r.text[:300])
 
 
 def main():

@@ -88,6 +88,13 @@ def patient_name(patient_id: str) -> str:
     return row["name"] if row else PATIENT_NAME
 
 
+def set_patient_name(patient_id: str, name: str) -> None:
+    """Renames the patient (adds their row if seed_demo.py was never run)."""
+    with db.pool().connection() as conn:
+        conn.execute("INSERT INTO patients (id, name) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+                     (patient_id, name))
+
+
 def current_memories(patient_id: str) -> list[dict]:
     """What the agent and the patient screen may know: confirmed and tentative memories,
     soonest first, then the ones with no time. Events that already happened are still here;
@@ -159,6 +166,29 @@ def finish_session(session_id: str, patient_id: str, source: str, extraction: di
             entry["memory_id"] = str(row["id"])
         conn.execute("UPDATE sessions SET extraction = %s WHERE id = %s", (Jsonb(extraction), session_id))
     return [_plain(r) for r in rows]
+
+
+def list_sessions(patient_id: str, limit: int = 20) -> list[dict]:
+    """Recent caregiver notes, newest first: the words, extraction's error or what it dropped, and
+    the memories it made with their status now (pending, confirmed, rejected, cancelled...).
+    Gemini's raw output stays in the database. extraction is None while Gemini is still working."""
+    with db.pool().connection() as conn:
+        sessions = conn.execute(
+            "SELECT id, transcript, created_at, extraction FROM sessions WHERE patient_id = %s "
+            "ORDER BY created_at DESC LIMIT %s", (patient_id, limit)).fetchall()
+        ids = [s["id"] for s in sessions]
+        memories = conn.execute(
+            f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE session_id = ANY(%s) ORDER BY created_at",
+            (ids,)).fetchall() if ids else []
+    made: dict[str, list[dict]] = {}
+    for m in map(_plain, memories):
+        made.setdefault(m["session_id"], []).append(m)
+    return [{"id": str(s["id"]), "transcript": s["transcript"], "created_at": s["created_at"].isoformat(),
+             "finished": s["extraction"] is not None,
+             "error": (s["extraction"] or {}).get("error"),
+             "dropped": (s["extraction"] or {}).get("dropped", []),
+             "memories": made.get(str(s["id"]), [])}
+            for s in sessions]
 
 
 # Review: staff confirm, reject, or cancel memories (database only). Every function is scoped to

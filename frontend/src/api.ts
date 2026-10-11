@@ -52,7 +52,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+    // A 422 from FastAPI lists each problem; the rest are one sentence written for staff
+    const detail = Array.isArray(body?.detail)
+      ? body.detail.map((d: { msg: string }) => d.msg.replace(/^Value error, /, "")).join(". ")
+      : body?.detail;
+    throw new Error(detail ?? `${res.status} ${res.statusText}`);
   }
   return (res.status === 204 ? undefined : res.json()) as Promise<T>;
 }
@@ -114,6 +118,102 @@ export function cancelMemory(id: string) {
   return request<Memory>(`/memories/${id}/cancel`, { method: "POST" });
 }
 
+/** A caregiver note and what extraction made of it */
+export type CaregiverSession = {
+  id: string;
+  transcript: string;
+  created_at: string;
+  /** False while Gemini is still working (or the server stopped mid-way) */
+  finished: boolean;
+  /** Why extraction failed; the words were still saved */
+  error: string | null;
+  dropped: ExtractionResult["dropped"];
+  /** The memories it made, with their status now */
+  memories: Memory[];
+};
+
+/** The 20 latest caregiver notes, newest first */
+export function listSessions() {
+  return request<{ sessions: CaregiverSession[] }>("/sessions");
+}
+
+/** Every version of a memory, oldest first */
+export function getMemoryHistory(id: string) {
+  return request<{ versions: Memory[] }>(`/memories/${id}/history`);
+}
+
+// The patient (staff): one at a time. Starting a new one, or the demo reset, replaces everything.
+
+type ResetResult = {
+  memories: number;
+  removed: Record<string, number>;
+  /** Why Snowflake's life story wasn't changed (Tiger Data still was) */
+  life_story_error: string | null;
+};
+
+export function getPatient() {
+  return request<{ name: string }>("/patient");
+}
+
+export function renamePatient(name: string) {
+  return request<{ name: string }>("/patient", { method: "PUT", body: JSON.stringify({ name }) });
+}
+
+/** Someone else: their name, and no memories, notes, answers, alerts, or life story */
+export function startNewPatient(name: string) {
+  return request<ResetResult & { name: string }>("/patient/new", { method: "POST", body: JSON.stringify({ name }) });
+}
+
+/** Back to Rose: her name, demo memories and life story, for everyone (the database is shared) */
+export function resetDemo() {
+  return request<ResetResult>("/demo/reset", { method: "POST" });
+}
+
+// Dashboard (staff)
+
+export type Dashboard = {
+  day: string;
+  asks_today: number;
+  by_topic: { topic: string; asks: number }[];
+  /** 24 entries, oldest first; hours are UTC instants */
+  by_hour: { hour: string; asks: number }[];
+  open_alerts: Partial<Record<AlertKind, number>>;
+  /** What the patient said they did: not verified */
+  self_reported_today: { id: string; ts: string; text: string; kind: StatementKind }[];
+};
+
+export function getDashboard() {
+  return request<Dashboard>("/dashboard");
+}
+
+// Life story (staff, Snowflake)
+
+export const LIFE_STORY_TOPICS = [
+  "family", "childhood", "work", "home", "music", "food", "pets", "friends", "faith", "travel", "hobbies", "other",
+] as const;
+
+export type Passage = {
+  id: string;
+  topic: (typeof LIFE_STORY_TOPICS)[number];
+  passage: string;
+  people: string;
+  said_by: string;
+  sensitive: boolean;
+  created_at?: string;
+};
+
+export function listPassages() {
+  return request<{ passages: Passage[] }>("/life-story/passages");
+}
+
+export function addPassage(passage: Omit<Passage, "id" | "created_at">) {
+  return request<Passage>("/life-story/passages", { method: "POST", body: JSON.stringify(passage) });
+}
+
+export function deletePassage(id: string) {
+  return request<void>(`/life-story/passages/${id}`, { method: "DELETE" });
+}
+
 export function startVoiceSession() {
   return request<VoiceSession>("/voice/session");
 }
@@ -172,6 +272,16 @@ export type Alert = {
   message: string;
   resolved: boolean;
 };
+
+/** What the agent's search_life_story tool hears: matching passages as text, or NO_LIFE_STORY */
+export function searchLifeStory(query: string) {
+  return request<{ passages: string; ids: string[] }>(`/life-story?q=${encodeURIComponent(query)}`);
+}
+
+/** What the agent's get_family_messages tool hears: this week's messages as quotes, or NO_MESSAGES */
+export function getAgentFamilyMessages() {
+  return request<{ messages: string }>("/voice/family-messages");
+}
 
 export function getFacts() {
   return request<{ facts: string; memory_ids: string[] }>("/voice/facts");

@@ -6,17 +6,35 @@ and replays work offline.
 """
 
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app import store
+from app.memory.context import spoken_day
+from app.memory.extraction import MEDICATION
 from app.store import DATA_DIR, PATIENT_ID
 
 AUDIO_DIR = DATA_DIR / "family_audio"
+
+NO_MESSAGES = "NO_MESSAGES: no family messages this week. Say there are no new messages; never invent one."
+# Older messages ("Happy birthday!") would confuse more than help
+AGENT_WINDOW = timedelta(days=7)
+AGENT_LIMIT = 5
 
 
 def list_messages() -> list[dict]:
     """Newest first."""
     return store.list_family_messages(PATIENT_ID)
+
+
+def for_agent(messages: list[dict], now: datetime) -> str:
+    """What the agent's get_family_messages tool returns: the newest messages from the last week,
+    as quotes. Messages mentioning medicine are left out: the agent never talks about medicine,
+    and staff write those on the Family messages page, not as memories."""
+    recent = [m for m in messages
+              if datetime.fromisoformat(m["created_at"]) >= now - AGENT_WINDOW and not MEDICATION.search(m["text"])]
+    lines = [f'- From {m["from_name"]}, {spoken_day(m["created_at"])}: "{m["text"]}"' for m in recent[:AGENT_LIMIT]]
+    return "\n".join(lines) or NO_MESSAGES
 
 
 def add_message(from_name: str, voice_id: str, text: str, audio: bytes) -> dict:

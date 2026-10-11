@@ -76,7 +76,9 @@ function Receipt({ answer }: { answer: Interaction }) {
       ))}
       {!answer.answered && <span className="alert-kind">Not in memory · care team asked</span>}
       {answer.sources.length === 0 && (
-        <span className="memory-when">{answer.answered ? `${checked}, none named in the answer` : checked}</span>
+        <span className="memory-when">
+          {!answer.answered ? checked : answer.checked === 0 ? "Not from a memory" : `${checked}, none used in the answer`}
+        </span>
       )}
     </div>
   );

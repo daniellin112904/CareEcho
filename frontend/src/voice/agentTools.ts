@@ -1,10 +1,12 @@
-import { getFacts, logInteraction, logStatement, raiseAlert, type StatementKind } from "../api";
+import { getAgentFamilyMessages, getFacts, logInteraction, logStatement, raiseAlert, searchLifeStory, type StatementKind } from "../api";
 
 const KINDS: StatementKind[] = ["medication", "meal", "activity", "feeling", "other"];
 
 // Said to the agent when the backend can't be reached, so it falls back to "I'm not sure"
 // instead of answering from nothing
 const LOOKUP_FAILED = "NO_MEMORY: the memory list couldn't be loaded. Say you are not sure right now.";
+const LIFE_STORY_FAILED = "LIFE_STORY_FAILED: the life story couldn't be reached. Say you are not sure right now.";
+const MESSAGES_FAILED = "NO_MESSAGES: the messages couldn't be loaded. Say you can't check messages right now.";
 
 // Phrases in English and Spanish, as whole words. JavaScript's \b doesn't know accented
 // letters ("me caí"), so Unicode letter lookarounds mark the word edges instead.
@@ -193,6 +195,27 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
       } catch (err) {
         console.warn("get_memories failed", err);
         return LOOKUP_FAILED;
+      }
+    },
+
+    async search_life_story({ query }: { query?: string }) {
+      // Counted on the dashboard as one topic, not split by the agent's wording
+      if (turn) turn.topic ||= "Life story";
+      try {
+        return (await searchLifeStory(query || turn?.question || "")).passages;
+      } catch (err) {
+        console.warn("search_life_story failed", err);
+        return LIFE_STORY_FAILED;
+      }
+    },
+
+    async get_family_messages() {
+      if (turn) turn.topic ||= "Family messages";
+      try {
+        return (await getAgentFamilyMessages()).messages;
+      } catch (err) {
+        console.warn("get_family_messages failed", err);
+        return MESSAGES_FAILED;
       }
     },
 

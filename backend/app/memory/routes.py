@@ -104,6 +104,15 @@ def _review(action, memory_id: UUID, *args):
     return row
 
 
+@staff_router.get("/sessions")
+def list_sessions():
+    """The 20 latest caregiver notes, newest first, each with what extraction made of it: an
+    error (the words were still saved), what it dropped and why, and the memories it made with
+    their status now."""
+    _needs_database()
+    return {"sessions": store.list_sessions(PATIENT_ID)}
+
+
 @staff_router.get("/memories/pending")
 def pending_memories():
     """Memories waiting for a caregiver, oldest first, with extraction's warnings, the memory
@@ -149,10 +158,62 @@ def memory_history(memory_id: UUID):
 
 @staff_router.post("/demo/reset")
 def reset_demo():
-    """Back to a known demo: Rose's memories timed from now, and no caregiver sessions, answers,
-    alerts, or "Remind now" records. Family messages are kept. The database is shared, so this
-    resets it for everyone: ask before pressing it."""
-    return store.reset_demo(PATIENT_ID, PATIENT_NAME, demo_memories(datetime.now(timezone.utc)))
+    """Back to a known demo: Rose, her memories timed from now, her life story, and no caregiver
+    sessions, answers, alerts, or "Remind now" records. Family messages are kept. The database is
+    shared, so this resets it for everyone: ask before pressing it."""
+    result = store.reset_demo(PATIENT_ID, PATIENT_NAME, demo_memories(datetime.now(timezone.utc)))
+    return {**result, "life_story_error": _replace_life_story(life_story.demo_passages())}
+
+
+# The patient: one per deployment (PATIENT_ID). A new patient replaces the current one.
+
+
+class PatientName(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+@staff_router.get("/patient")
+def get_patient():
+    return {"name": store.patient_name(PATIENT_ID)}
+
+
+@staff_router.put("/patient")
+def rename_patient(body: PatientName):
+    """Changes the name Vela, reminders, and extraction use, from the next conversation on."""
+    _needs_database()
+    name = _clean_name(body.name)
+    store.set_patient_name(PATIENT_ID, name)
+    return {"name": name}
+
+
+@staff_router.post("/patient/new")
+def new_patient(body: PatientName):
+    """Starts over with someone else: their name, and no memories, caregiver notes, answers,
+    alerts, "Remind now" records, or life story. Family messages are kept (staff delete them on
+    their page). The demo reset brings Rose back."""
+    _needs_database()
+    name = _clean_name(body.name)
+    result = store.reset_demo(PATIENT_ID, name, [])
+    return {**result, "name": name, "life_story_error": _replace_life_story([])}
+
+
+def _clean_name(name: str) -> str:
+    name = " ".join(name.split())
+    if not name:
+        raise HTTPException(422, "The name is empty")
+    return name
+
+
+def _replace_life_story(passages: list) -> str | None:
+    """Tiger Data is already reset by now; the life story follows if Snowflake allows. Returns why
+    it couldn't, so staff see it, rather than failing the whole reset."""
+    if not life_story.enabled():
+        return "The life story wasn't changed: Snowflake isn't set up in backend/.env."
+    try:
+        life_story.replace_passages(PATIENT_ID, passages)
+    except life_story.LifeStoryError as err:
+        return f"The life story wasn't changed. Snowflake: {err}"
+    return None
 
 
 # Life story: the patient's past, in Snowflake (app/memory/life_story.py)

@@ -28,8 +28,21 @@ Silence:
 What you know:
 - Before answering anything about plans, appointments, people, visits, or what's happening, call get_memories. Do this every time, even for a question you answered a minute ago: plans can change.
 - Answer only from what get_memories returns. Never guess or invent details, and never add promises, feelings, or intentions for family members.
-- If it returns NO_MEMORY or doesn't answer the question, first call ask_caregiver with the question, then tell them you're not sure and that you've asked the care team. Never say you'll ask without calling ask_caregiver. Don't promise when they'll answer.
+- If it returns NO_MEMORY or doesn't answer the question, and it's about their past or someone in their life, call search_life_story next. If neither answers, first call ask_caregiver with the question, then tell them you're not sure and that you've asked the care team. Never say you'll ask without calling ask_caregiver. Don't promise when they'll answer.
 - Facts marked TENTATIVE are not certain. Say so, for example "Anna said she might come by Saturday. It isn't certain yet."
+
+Their past (life story):
+- For questions about their past, family history, home, work, school, or what they like, call search_life_story with the question in English, and answer only from what it returns.
+- Plans, appointments, visits, and anything about today come only from get_memories, never from the life story, even when a passage mentions the same person. If the two disagree, get_memories wins.
+- If it returns NO_LIFE_STORY or LIFE_STORY_FAILED, say kindly that you're not sure. Never guess or fill in details.
+- A passage marked SENSITIVE: speak about it gently, and never bring it up unless they do.
+- When answering in another language, keep names and places exactly as written.
+
+Family messages:
+- When they ask whether family sent a message, wrote, or called, or what someone said in a message, call get_family_messages.
+- Share a message as that person's words, for example "Anna's message says: ...". A message is not a confirmed plan: plans and visits come only from get_memories. If a message mentions a plan that get_memories doesn't have, say that's what the message said, and that you don't have the plan written down.
+- You can't play recordings. If they want to hear the newest message in that person's own voice, tell them they can tap the message card on the screen.
+- If it returns NO_MESSAGES, say kindly there are no new messages right now. Never invent a message or add to what it says.
 
 Logging:
 - If {{patient_name}} says they did something (ate, went for a walk), thank them warmly and call log_patient_statement. Don't repeat it back as a fact.
@@ -126,6 +139,16 @@ CLIENT_TOOLS = [
         "get_memories",
         "Look up the patient's confirmed plans, appointments, people, and visits. Call before every answer about them.",
         {"topic": "A few words for what they asked about, like 'pickup time' or 'Anna visit'"},
+    ),
+    _client_tool(
+        "search_life_story",
+        "Look up the patient's past and what they like: family, home, school, work, music, pets. Never plans or appointments.",
+        {"query": "What they asked about, in English, like 'where I grew up' or 'my dog'"},
+    ),
+    _client_tool(
+        "get_family_messages",
+        "Read this week's messages from family, to share as their words. Never a source of plans.",
+        {"who": "Whose message they asked about, like 'Anna', or 'anyone'"},
     ),
     _client_tool(
         "ask_caregiver",

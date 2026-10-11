@@ -1,74 +1,100 @@
-import { useEffect, useId, useRef, type ButtonHTMLAttributes } from "react";
+import { useEffect, useRef, type ButtonHTMLAttributes } from "react";
 import "./orb.css";
 
 export type OrbMode = "idle" | "connecting" | "listening" | "speaking";
-export type OrbPalette = "calm" | "warm" | "teal";
-
-// Wax colors: body, shaded side, and the light rim and drip on top
-const PALETTES: Record<OrbPalette, { wax: string; shade: string; rim: string }> = {
-  calm: { wax: "#6b74e0", shade: "#4c55c7", rim: "#a9b3f5" },
-  warm: { wax: "#f0a56b", shade: "#e2683a", rim: "#ffd9a8" },
-  teal: { wax: "#3fb08c", shade: "#1d9e75", rim: "#9fe1cb" },
-};
-
-// Flame size in each mode, before the voice level is added
-const FLAME: Record<OrbMode, number> = { idle: 1, connecting: 0.6, listening: 1.08, speaking: 1.1 };
-
-const INK = "#1c1f4a";
 
 type OrbProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
   mode?: OrbMode;
-  palette?: OrbPalette;
   /** Voice level from 0 to 1, read every frame while listening or speaking. */
   getLevel?: () => number;
 };
 
-/** Vela's face on screen: a little candle whose flame and mouth follow the voice. */
-export default function Orb({ mode = "idle", palette = "calm", getLevel, className, ...button }: OrbProps) {
-  // useId has colons, which break url(#...)
-  const clipId = `wax${useId().replace(/\W/g, "")}`;
+const INK = "#0b0b0b";
+// Pivots in the 160x160 drawing: the bottom of the flame, and the middle of the eyes
+const BASE = { x: 80, y: 126 };
+const EYES = { x: 80, y: 88 };
+
+const about = (p: { x: number; y: number }, inner: string) => `translate(${p.x} ${p.y}) ${inner} translate(${-p.x} ${-p.y})`;
+
+/** Vela's face on screen: Ember, the flame from the logo, sitting in its V. Tapping it makes it hop. */
+export default function Orb({ mode = "idle", getLevel, className, onPointerDown, ...button }: OrbProps) {
   const bodyRef = useRef<SVGGElement>(null);
-  const flameRef = useRef<SVGGElement>(null);
-  const glowRef = useRef<SVGCircleElement>(null);
-  const mouthRef = useRef<SVGEllipseElement>(null);
+  const eyesRef = useRef<SVGGElement>(null);
   const smileRef = useRef<SVGPathElement>(null);
+  const mouthRef = useRef<SVGEllipseElement>(null);
+  const hop = useRef(0);
   const latest = useRef({ mode, getLevel });
 
   useEffect(() => {
     latest.current = { mode, getLevel };
   });
 
-  // One animation loop for the candle's lifetime. It reads the latest mode from a ref and
+  // One animation loop for Ember's lifetime. It reads the latest mode from a ref and
   // eases toward it, so switching states never makes the motion jump.
   useEffect(() => {
-    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const wiggle = reduceMotion ? 0 : 1;
-    let flame = FLAME.idle;
+    const motion = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0.3 : 1;
+    const phase = Math.random() * 10;
     let level = 0;
     let talk = 0;
-    let glow = 0;
+    let listen = 0;
+    let wake = 0;
+    let look = 0;
+    let blinkAt = performance.now() + 1500;
+    let blinkStart = -Infinity;
+    let last = performance.now();
 
     let frame = requestAnimationFrame(function tick(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const t = now / 1000 + phase;
       const { mode, getLevel } = latest.current;
-      const heard = mode === "listening" || mode === "speaking" ? Math.min(1, (getLevel?.() ?? 0) * 2) : 0;
-      // While connecting the small flame sputters, like a candle being lit
-      const sputter = mode === "connecting" ? 0.12 * Math.sin(now / 180) * wiggle : 0;
 
+      // A recorded message has no live level, so fake a speaking rhythm for it
+      const heard =
+        mode !== "listening" && mode !== "speaking"
+          ? 0
+          : getLevel
+            ? Math.min(1, getLevel() * 2)
+            : mode === "speaking"
+              ? Math.max(0, Math.min(1, 0.4 + 0.35 * Math.sin(t * 13) + 0.3 * Math.sin(t * 5.3) * Math.sin(t * 2.1)))
+              : 0;
       level += (heard - level) * 0.2;
-      flame += (FLAME[mode] + sputter - flame) * 0.1;
-      talk += ((mode === "speaking" ? 1 : 0) - talk) * 0.15;
-      glow += ((mode === "listening" ? 1 : 0) - glow) * 0.08;
+      talk += ((mode === "speaking" ? 1 : 0) - talk) * 0.12;
+      listen += ((mode === "listening" ? 1 : 0) - listen) * 0.08;
+      wake += ((mode === "connecting" ? 1 : 0) - wake) * 0.1;
+      hop.current = Math.max(0, hop.current - dt * 1.6);
+      const arc = Math.sin(Math.PI * hop.current) * motion;
 
-      const sway = 3 * Math.sin(now / 650) * wiggle;
-      const grow = flame * (1 + 0.35 * level) * (1 + 0.04 * Math.sin(now / 400) * wiggle);
-      if (flameRef.current) flameRef.current.style.transform = `rotate(${sway.toFixed(2)}deg) scale(${grow.toFixed(4)})`;
-      if (glowRef.current) {
-        glowRef.current.style.opacity = (glow * (0.45 + 0.4 * level)).toFixed(3);
-        glowRef.current.style.transform = `scale(${(1 + 0.3 * level).toFixed(4)})`;
+      // Breathes, bounces while talking, stretches with the voice, and huddles small while waking up
+      const breathe = Math.sin(t * 2.2);
+      const y = (2 * breathe - 6 * talk * level * Math.abs(Math.sin(t * 7))) * motion - 22 * arc;
+      const sy = 1 + (0.025 * breathe + 0.07 * level * (talk + listen)) * motion + 0.08 * arc - 0.12 * wake;
+      const sx = 1 - (sy - 1) * 0.8;
+      // Flickers like a flame, leans in to listen, and shivers while waking up
+      const sway =
+        (3 * Math.sin(t * 2.7) + Math.sin(t * 6.1) + listen * (7 + 2 * Math.sin(t * 3)) + 4 * wake * Math.sin(t * 11)) * motion;
+      bodyRef.current?.setAttribute(
+        "transform",
+        `translate(0 ${y.toFixed(2)}) ${about(BASE, `rotate(${sway.toFixed(2)}) scale(${sx.toFixed(4)} ${sy.toFixed(4)})`)}`,
+      );
+
+      // Blinks every few seconds, sometimes twice; glances around when idle and toward you when listening
+      if (now > blinkAt) {
+        blinkStart = now;
+        blinkAt = now + (Math.random() < 0.25 ? 260 : 2200 + Math.random() * 3200);
       }
-      if (bodyRef.current) bodyRef.current.style.transform = `translateY(${(1.2 * Math.sin(now / 1100) * wiggle).toFixed(3)}px)`;
-      mouthRef.current?.setAttribute("ry", (talk * (1.5 + 5 * level)).toFixed(2));
-      smileRef.current?.setAttribute("opacity", (1 - talk).toFixed(3));
+      const open = now - blinkStart < 130 ? 0.1 : 1 - 0.6 * wake;
+      const glance =
+        mode === "listening" ? 3 : mode === "idle" && Math.sin(t * 0.23) > 0.35 ? 3 * Math.sign(Math.sin(t * 0.6)) : 0;
+      look += (glance * motion - look) * 0.08;
+      const wide = 1 + 0.12 * listen + 0.12 * arc;
+      eyesRef.current?.setAttribute(
+        "transform",
+        `translate(${look.toFixed(2)} ${(-listen).toFixed(2)}) ${about(EYES, `scale(${wide.toFixed(3)} ${(wide * open).toFixed(3)})`)}`,
+      );
+
+      mouthRef.current?.setAttribute("ry", (talk * (1.5 + 6 * level) + 4 * arc).toFixed(2));
+      smileRef.current?.setAttribute("opacity", (1 - Math.min(1, talk + 3 * arc)).toFixed(2));
 
       frame = requestAnimationFrame(tick);
     });
@@ -76,43 +102,33 @@ export default function Orb({ mode = "idle", palette = "calm", getLevel, classNa
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  const { wax, shade, rim } = PALETTES[palette];
-
   return (
-    <button type="button" className={className ? `orb ${className}` : "orb"} data-mode={mode} {...button}>
-      <svg viewBox="-10 0 140 140" aria-hidden="true">
-        <defs>
-          <clipPath id={clipId}>
-            <rect x="30" y="54" width="60" height="68" rx="18" />
-          </clipPath>
-        </defs>
-        <circle ref={glowRef} className="orb-glow" cx="60" cy="36" r="26" fill="#ffd9a8" opacity="0" />
+    <button
+      type="button"
+      className={className ? `orb ${className}` : "orb"}
+      data-mode={mode}
+      onPointerDown={(event) => {
+        hop.current = 1;
+        onPointerDown?.(event);
+      }}
+      {...button}
+    >
+      <svg viewBox="0 0 160 160" aria-hidden="true">
         <g ref={bodyRef}>
-          <g ref={flameRef} className="orb-flame">
-            <path d="M60 12 C71 27 74 38 67 47 C64 51 56 51 53 47 C46 38 50 26 60 12 Z" fill="#ec8a4f" />
-            <path d="M60 27 C65 35 66 41 63 45 C61 47.5 59 47.5 57 45 C54 41 56 34 60 27 Z" fill="#ffd9a8" />
+          <path d="M80 30 C96 52 108 72 108 96 C108 114 95 126 80 126 C65 126 52 114 52 96 C52 72 64 52 80 30 Z" fill="#ec8a4f" />
+          <ellipse cx="80" cy="111" rx="17" ry="11" fill="#ffd9a8" />
+          <ellipse cx="62" cy="98" rx="6" ry="3.5" fill="#d9532a" opacity="0.45" />
+          <ellipse cx="98" cy="98" rx="6" ry="3.5" fill="#d9532a" opacity="0.45" />
+          <g ref={eyesRef}>
+            <ellipse cx="70" cy="88" rx="5" ry="7" fill={INK} />
+            <ellipse cx="90" cy="88" rx="5" ry="7" fill={INK} />
+            <circle cx="71.7" cy="85.2" r="1.9" fill="#fff" />
+            <circle cx="91.7" cy="85.2" r="1.9" fill="#fff" />
           </g>
-          <rect x="58.5" y="48" width="3" height="8" rx="1.5" fill={INK} />
-          <rect x="22" y="80" width="12" height="20" rx="6" fill={wax} />
-          <rect x="86" y="80" width="12" height="20" rx="6" fill={shade} />
-          <rect x="40" y="114" width="12" height="14" rx="6" fill={shade} />
-          <rect x="68" y="114" width="12" height="14" rx="6" fill={shade} />
-          <g clipPath={`url(#${clipId})`}>
-            <rect x="30" y="54" width="60" height="68" fill={wax} />
-            <rect x="80" y="54" width="10" height="68" fill={shade} />
-            <rect x="30" y="54" width="60" height="9" fill={rim} />
-            <rect x="38" y="58" width="7" height="16" rx="3.5" fill={rim} />
-            <rect x="30" y="114" width="60" height="8" fill={shade} />
-          </g>
-          <ellipse cx="45" cy="94" rx="5" ry="3" fill="#f0997b" opacity="0.55" />
-          <ellipse cx="75" cy="94" rx="5" ry="3" fill="#f0997b" opacity="0.55" />
-          <g className="orb-eyes">
-            <ellipse cx="50" cy="85" rx="3.2" ry="5" fill={INK} />
-            <ellipse cx="70" cy="85" rx="3.2" ry="5" fill={INK} />
-          </g>
-          <path ref={smileRef} d="M55 96 Q60 100 65 96" stroke={INK} strokeWidth="2.4" fill="none" strokeLinecap="round" />
-          <ellipse ref={mouthRef} cx="60" cy="98" rx="4" ry="0" fill={INK} />
+          <path ref={smileRef} d="M75 99 Q80 103.5 85 99" stroke={INK} strokeWidth="2.6" fill="none" strokeLinecap="round" />
+          <ellipse ref={mouthRef} cx="80" cy="101" rx="4.5" ry="0" fill="#5a1d0c" />
         </g>
+        <path d="M48 110 L80 146 L112 110" fill="none" stroke={INK} strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button>
   );

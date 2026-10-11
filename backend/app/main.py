@@ -19,10 +19,10 @@ from app.voice.routes import staff_router as voice_staff_router
 
 app = FastAPI(title="Vela API")
 
-# Lets the React dev server (port 5173) call this API
+# Lets the React dev server call this API on whatever port Vite picks (5173, 5174, ...)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

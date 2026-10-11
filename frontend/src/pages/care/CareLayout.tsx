@@ -41,12 +41,15 @@ function StaffShell({ onLock }: { onLock: () => void }) {
     <div className="care">
       <header className="care-bar">
         <span className="care-mark">
-          <img src="/vela.svg" alt="" />
+          <img src="/vela-logo.svg" alt="" />
           Vela
         </span>
         <nav className="care-nav">
           <NavLink to="voices">Family messages</NavLink>
+          <NavLink to="dashboard">Today</NavLink>
+          <NavLink to="patient">Patient</NavLink>
           <NavLink to="memories">Memories</NavLink>
+          <NavLink to="life-story">Life story</NavLink>
           <NavLink to="conversations">Conversations</NavLink>
           <NavLink to="alerts">
             Alerts
@@ -137,7 +140,7 @@ function PinGate({ onUnlock }: { onUnlock: () => void }) {
   return (
     <main className="pin-gate">
       <form className="pin-form" onSubmit={submit}>
-        <Orb palette="teal" tabIndex={-1} aria-hidden />
+        <Orb tabIndex={-1} aria-hidden />
         <h1>Staff access</h1>
         <label htmlFor="pin">Enter the staff PIN</label>
         <input

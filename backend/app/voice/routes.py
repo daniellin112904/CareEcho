@@ -1,6 +1,6 @@
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from elevenlabs.client import ElevenLabs
@@ -77,6 +77,13 @@ def start_session():
 def facts():
     """What the agent's get_memories tool returns: every current memory, see build_facts."""
     return build_facts(PATIENT_ID)
+
+
+@router.get("/voice/family-messages")
+def family_messages_for_agent():
+    """What the agent's get_family_messages tool returns: this week's family messages as quotes,
+    without any that mention medicine (see messages.for_agent)."""
+    return {"messages": messages.for_agent(messages.list_messages(), datetime.now(timezone.utc))}
 
 
 # Family voices: cloned with consent, used only to read messages family wrote

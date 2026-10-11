@@ -38,15 +38,16 @@ def _tz() -> ZoneInfo:
 
 
 def _spoken(at: datetime, now: datetime) -> str:
-    """'2:30 this afternoon', or 'tomorrow at 9:00 in the morning'."""
+    """'at 2:30 this afternoon', 'tomorrow at 9:00 in the morning', or 'on Monday at ...'. Each
+    brings its own "at"/"on", so the sentence never says "at tomorrow at"."""
     at, now = at.astimezone(_tz()), now.astimezone(_tz())
     clock = f"{at.hour % 12 or 12}:{at.minute:02d}"
     part = "morning" if at.hour < 12 else "afternoon" if at.hour < 17 else "evening"
     if at.date() == now.date():
-        return f"{clock} this {part}"
+        return f"at {clock} this {part}"
     if at.date() == (now + timedelta(days=1)).date():
         return f"tomorrow at {clock} in the {part}"
-    return f"{at:%A} at {clock} in the {part}"
+    return f"on {at:%A} at {clock} in the {part}"
 
 
 def _plan(memory: dict):
@@ -73,9 +74,9 @@ def _sentence(memory: dict, lead: str, now: datetime) -> str | None:
     if who and lead == "5min":
         return f"{name}, {who} will be here in about five minutes to pick you up for your {what}."
     main = (
-        f"{who} is picking you up at {_spoken(at, now)} for your {what}"
+        f"{who} is picking you up {_spoken(at, now)} for your {what}"
         if who
-        else f"your {what} is at {_spoken(at, now)}"
+        else f"your {what} is {_spoken(at, now)}"
     )
     soon = {"30min": " That's in about 30 minutes.", "5min": " That's in about five minutes."}.get(lead, "")
     return f"{name}, a reminder: {main}.{soon}"

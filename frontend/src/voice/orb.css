@@ -16,37 +16,3 @@
   height: 100%;
   overflow: visible;
 }
-
-.orb-flame {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  will-change: transform;
-}
-
-.orb-glow {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-.orb-eyes {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: orb-blink 4.5s infinite;
-}
-
-@keyframes orb-blink {
-  0%,
-  93%,
-  100% {
-    transform: scaleY(1);
-  }
-  96% {
-    transform: scaleY(0.12);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .orb-eyes {
-    animation: none;
-  }
-}

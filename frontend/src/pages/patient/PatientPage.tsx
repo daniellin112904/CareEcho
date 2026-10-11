@@ -10,6 +10,7 @@ import {
   type Memory,
 } from "../../api";
 import { createAgentSession } from "../../voice/agentTools";
+import { startOfDay, timeWords, whenWords } from "../../when";
 import Orb, { type OrbMode } from "../../voice/Orb";
 import { useReminders } from "./useReminders";
 import "./patient.css";
@@ -79,7 +80,7 @@ function Companion({
     },
     onConnect: ({ conversationId }) => agentSession.current?.setConversationId(conversationId),
     onDisconnect: () => agentSession.current?.flush(),
-    onError: () => setError("I'm having trouble hearing you. Tap the candle to try again."),
+    onError: () => setError("I'm having trouble hearing you. Tap the flame to try again."),
   });
   const { status, isSpeaking, getInputVolume, getOutputVolume, sendContextualUpdate } = conversation;
   const live = status === "connected";
@@ -114,7 +115,7 @@ function Companion({
         clientTools: agentSession.current.clientTools,
       });
     } catch {
-      setError("I can't connect right now. Tap the candle to try again.");
+      setError("I can't connect right now. Tap the flame to try again.");
     } finally {
       setStarting(false);
     }
@@ -132,9 +133,9 @@ function Companion({
         speaking: "Speaking…",
       }[mode];
   const hint = {
-    idle: "Tap the candle and ask me anything",
+    idle: "Tap the flame and ask me anything",
     connecting: "Getting ready to listen",
-    listening: "Tap the candle when you're done",
+    listening: "Tap the flame when you're done",
     speaking: "",
   }[mode];
 
@@ -187,7 +188,7 @@ function Clock() {
     <header className="patient-top">
       <div className="patient-bar">
         <span className="patient-mark">
-          <img src="/vela.svg" alt="" />
+          <img src="/vela-logo.svg" alt="" />
           Vela
         </span>
         <span className="patient-pill">
@@ -339,7 +340,7 @@ function FamilyMessageCard() {
   const from = message.from_name;
   return (
     <div className="patient-card patient-message">
-      <Orb palette="warm" mode={playing ? "speaking" : "idle"} onClick={toggle} tabIndex={-1} aria-hidden />
+      <Orb mode={playing ? "speaking" : "idle"} onClick={toggle} tabIndex={-1} aria-hidden />
       <div className="patient-message-copy">
         <p className="patient-message-title">Recorded message from {from}</p>
         <p className="patient-card-detail">{playing ? `"${message.text}"` : `In ${from}'s own voice`}</p>
@@ -351,32 +352,10 @@ function FamilyMessageCard() {
   );
 }
 
-function timeWords(date: Date) {
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
 // An all-day plan ("Anna might visit Saturday") stays up all that day; a timed one until it starts
 function hasPassed(memory: Memory, now: Date) {
   const at = new Date(memory.event_at!);
   return memory.all_day ? startOfDay(at) < startOfDay(now) : at < now;
-}
-
-function whenWords(date: Date, now: Date, allDay = false) {
-  const days = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);
-  const day =
-    days === 0
-      ? "today"
-      : days === 1
-        ? "tomorrow"
-        : days < 7
-          ? `on ${date.toLocaleDateString([], { weekday: "long" })}`
-          : `on ${date.toLocaleDateString([], { month: "long", day: "numeric" })}`;
-  // An all-day plan has no time to say
-  return allDay ? day : `${day} at ${timeWords(date)}`;
-}
-
-function startOfDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
 function pickupLine(memory: Memory) {

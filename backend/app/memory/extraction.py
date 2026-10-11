@@ -32,7 +32,7 @@ CALENDAR_DAYS = 14
 # Gemini is told to leave medicine out; this catches it if Gemini doesn't (the same idea as the
 # emergency phrases in frontend/src/voice/agentTools.ts: a backup that doesn't rely on the AI).
 MEDICATION = re.compile(
-    r"\b(pills?|medicines?|medications?|meds|doses?|dosage|tablets?|capsules?|prescriptions?|refills?|"
+    r"\b(pills?|medicines?|medications?|meds?|doses?|dosage|tablets?|capsules?|prescriptions?|refills?|"
     r"insulin|injections?|inhalers?|antibiotics?|vitamins?)\b",
     re.IGNORECASE,
 )

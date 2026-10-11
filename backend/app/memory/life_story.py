@@ -10,12 +10,14 @@ The life story is only ever about the past and preferences. Plans and appointmen
 (Tiger Data, confirmed by a caregiver), and medicine is never saved anywhere the agent reads.
 """
 
+import json
 import logging
 import os
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -137,6 +139,13 @@ def delete_passage(patient_id: str, passage_id: str) -> bool:
     """Whether a passage with that ID existed (for this patient)."""
     rows = _sql("DELETE FROM PASSAGES WHERE ID = ? AND PATIENT_ID = ?", passage_id, patient_id)
     return bool(rows) and int(next(iter(rows[0].values()))) > 0
+
+
+def demo_passages() -> list[Passage]:
+    """Rose's life story (life_story_demo.json), for the demo reset. scripts/seed_life_story.py
+    loads any file and explains each problem; this one is checked in, so it's assumed valid."""
+    path = Path(__file__).with_name("life_story_demo.json")
+    return [Passage.model_validate(e) for e in json.loads(path.read_text(encoding="utf-8"))]
 
 
 def replace_passages(patient_id: str, passages: list[Passage]) -> int:
