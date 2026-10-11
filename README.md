@@ -37,7 +37,7 @@ The name comes from the Spanish *velar*: to keep watch over someone, especially 
 ## Demo video
 
 <p align="center">
-  <a href=".github/readme/demo.mp4">
+  <a href="https://www.youtube.com/watch?v=qTsrEvliciY">
     <img src=".github/readme/demo.gif" alt="Rose asks when Anna is picking her up, and asks again ten minutes later. Vela gives the same calm answer both times." width="720" />
   </a>
   <br />
@@ -45,7 +45,7 @@ The name comes from the Spanish *velar*: to keep watch over someone, especially 
 </p>
 
 <p align="center">
-  <a href=".github/readme/demo.mp4"><strong>▶ Watch the full launch video</strong></a> (2 minutes)
+  <a href="https://www.youtube.com/watch?v=qTsrEvliciY"><strong>▶ Watch the full launch video on YouTube</strong></a> (2 minutes)
 </p>
 
 
