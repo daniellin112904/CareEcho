@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://devpost.com/software/vela-25l69m">Devpost</a> ·
   <a href="#demo-video">Demo video</a> ·
-  Website (link coming soon)
+  <a href="https://velacare.health">velacare.health</a>
 </p>
 
 <p align="center">
