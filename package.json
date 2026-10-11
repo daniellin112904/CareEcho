@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n backend,frontend -c teal,cyan \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "cd backend && .venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --port 8000",
+    "dev:backend": "node scripts/dev-backend.js",
     "dev:frontend": "npm --prefix frontend run dev",
     "install:all": "npm install && npm --prefix frontend install"
   },
