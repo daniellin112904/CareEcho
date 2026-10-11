@@ -22,7 +22,7 @@ app = FastAPI(title="Vela API")
 # Lets the React dev server call this API on whatever port Vite picks (5173, 5174, ...)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+|https://(www\.)?velacare\.health|https://[a-z0-9-]+\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
