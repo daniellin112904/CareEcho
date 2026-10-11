@@ -1,6 +1,6 @@
-/* Shared look for the patient and staff sides: off-white canvas, light headlines,
+/* Shared look for the patient and staff sides: off-white canvas, Inter throughout,
    black pill for the main action, gray trays holding white cards. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Inter+Tight:wght@300;400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap");
 
 :root {
   --v-bg: #fdfcfc;
@@ -18,5 +18,4 @@
   --v-tag-amber: #633806;
 
   --v-body: Inter, system-ui, sans-serif;
-  --v-heading: "Inter Tight", Inter, system-ui, sans-serif;
 }

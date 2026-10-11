@@ -82,8 +82,7 @@
 .care h1,
 .care h2 {
   margin: 0 0 8px;
-  font-family: var(--v-heading);
-  font-weight: 300;
+  font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1.1;
 }
@@ -242,13 +241,14 @@
   color: var(--v-tag-amber);
 }
 
-/* Forms: a white card */
+/* Forms: a white card in a gray tray like the lists. The thick border is the tray, so a form
+   needs no wrapper element. */
 
 .clone-form {
   display: grid;
   gap: 20px;
   padding: clamp(18px, 3vw, 28px);
-  border: 1px solid var(--v-hairline);
+  border: 6px solid var(--v-tray);
   border-radius: 20px;
   background: var(--v-card);
 }
@@ -408,9 +408,8 @@
 .message-text {
   margin: 0;
   max-width: 62ch;
-  font-family: var(--v-heading);
   font-size: 20px;
-  font-weight: 300;
+  font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1.4;
 }
@@ -476,9 +475,8 @@
 .alert-message {
   margin: 0;
   max-width: 62ch;
-  font-family: var(--v-heading);
   font-size: 20px;
-  font-weight: 300;
+  font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1.4;
 }
@@ -513,9 +511,8 @@
 }
 
 .qa-answer {
-  font-family: var(--v-heading);
   font-size: 18px;
-  font-weight: 300;
+  font-weight: 500;
 }
 
 .qa-who {
@@ -582,9 +579,8 @@
   margin: 0;
   padding-left: 12px;
   border-left: 2px solid var(--v-hairline);
-  font-family: var(--v-heading);
   font-size: 17px;
-  font-weight: 300;
+  font-weight: 500;
   line-height: 1.45;
 }
 
@@ -648,9 +644,8 @@
 
 .toast-message {
   margin: 0;
-  font-family: var(--v-heading);
   font-size: 18px;
-  font-weight: 300;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -684,7 +679,7 @@
   gap: 14px;
   width: min(100%, 380px);
   padding: 36px 32px 32px;
-  border: 1px solid var(--v-hairline);
+  border: 6px solid var(--v-tray);
   border-radius: 24px;
   background: var(--v-card);
   text-align: center;
@@ -698,9 +693,8 @@
 
 .pin-form h1 {
   margin: 0;
-  font-family: var(--v-heading);
   font-size: 34px;
-  font-weight: 300;
+  font-weight: 500;
   letter-spacing: -0.02em;
 }
 
@@ -835,9 +829,8 @@
 
 .dash-headline {
   color: var(--v-ink);
-  font-family: var(--v-heading);
   font-size: clamp(20px, 2.6vw, 26px);
-  font-weight: 300;
+  font-weight: 500;
 }
 
 .dash-chart {

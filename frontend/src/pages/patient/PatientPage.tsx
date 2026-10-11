@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConversationProvider, useConversation, useConversationControls, useConversationStatus } from "@elevenlabs/react";
 import {
   familyMessageAudioUrl,
@@ -172,8 +172,6 @@ function Companion({
   const announcing = announcement !== null && !live && !busy;
   const mode: OrbMode =
     busy ? "connecting" : live ? (isSpeaking ? "speaking" : "listening") : announcing ? "speaking" : "idle";
-  const label = announcing ? t.orb.reminder : t.orb[mode];
-  const hint = mode === "speaking" ? "" : t.hint[mode];
 
   return (
     <section className="patient-center">
@@ -186,7 +184,7 @@ function Companion({
       <p className="patient-status" aria-live="polite">
         {/* A bigger target for the same action; keyboard users already have the orb */}
         <button type="button" className="patient-status-button" onClick={toggle} tabIndex={-1}>
-          {error ? t[error] : label}
+          <SameSize lang={lang}>{(l) => (error ? STRINGS[l][error] : announcing ? STRINGS[l].orb.reminder : STRINGS[l].orb[mode])}</SameSize>
         </button>
       </p>
       <div className="patient-words">
@@ -196,11 +194,75 @@ function Companion({
               {announcing ? announcement : caption}
             </p>
           ) : (
-            <p className="patient-hint">{hint}</p>
+            <p className="patient-hint">
+              {mode !== "speaking" && <SameSize lang={lang}>{(l) => STRINGS[l].hint[mode]}</SameSize>}
+            </p>
           ))}
       </div>
     </section>
   );
+}
+
+/**
+ * Every language's version of some text, stacked in the same spot with only the chosen one
+ * visible. The box is always sized for the longest, so switching language never moves the layout.
+ */
+function SameSize({ lang, children }: { lang: Lang; children: (lang: Lang) => ReactNode }) {
+  return (
+    <span className="patient-same">
+      {LANGUAGES.map(({ code }) => (
+        <span key={code} lang={code} className={code === lang ? undefined : "patient-same-hidden"}>
+          {children(code)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// Drawn rather than emoji: Windows shows flag emoji as two letters. Spanish uses Spain's flag.
+function Flag({ lang }: { lang: Lang }) {
+  return (
+    <svg className="patient-flag" viewBox="0 0 30 20" aria-hidden="true">
+      {lang === "en" && (
+        <>
+          <rect width="30" height="20" fill="#fff" />
+          {[0, 2, 4, 6, 8, 10, 12].map((i) => (
+            <rect key={i} y={(i * 20) / 13} width="30" height={20 / 13} fill="#b22234" />
+          ))}
+          <rect width="13" height={(7 * 20) / 13} fill="#3c3b6e" />
+        </>
+      )}
+      {lang === "es" && (
+        <>
+          <rect width="30" height="20" fill="#aa151b" />
+          <rect y="5" width="30" height="10" fill="#f1bf00" />
+        </>
+      )}
+      {lang === "zh" && (
+        <>
+          <rect width="30" height="20" fill="#de2910" />
+          {[
+            [5, 5, 3],
+            [10, 2, 1],
+            [12, 4, 1],
+            [12, 7, 1],
+            [10, 9, 1],
+          ].map(([x, y, r]) => (
+            <polygon key={`${x},${y}`} points={star(x, y, r)} fill="#ffde00" />
+          ))}
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** Points of a five-pointed star centered on (x, y) with outer radius r */
+function star(x: number, y: number, r: number) {
+  return Array.from({ length: 10 }, (_, i) => {
+    const radius = i % 2 ? r * 0.382 : r;
+    const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+    return `${(x + radius * Math.cos(angle)).toFixed(2)},${(y + radius * Math.sin(angle)).toFixed(2)}`;
+  }).join(" ");
 }
 
 function lastSentences(text: string, count = 2) {
@@ -226,21 +288,34 @@ function Clock({ lang, onLanguage, locked }: { lang: Lang; onLanguage: (lang: La
           Vela
         </span>
         <div className="patient-bar-end">
-          <label className="patient-pill patient-language">
-            <span className="patient-language-label">{STRINGS[lang].language}</span>
-            <select value={lang} onChange={(event) => onLanguage(event.target.value as Lang)} disabled={locked}>
-              {LANGUAGES.map(({ code, name }) => (
-                <option key={code} value={code} lang={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="patient-pill">{clockPill(lang, now)}</span>
+          {/* All three languages in view, one tap each, rather than a dropdown to open first */}
+          <div className="patient-languages" role="radiogroup" aria-label={STRINGS[lang].language}>
+            {LANGUAGES.map(({ code, name }) => (
+              <label key={code} className="patient-language" lang={code}>
+                <input
+                  type="radio"
+                  name="patient-language"
+                  value={code}
+                  checked={code === lang}
+                  onChange={() => onLanguage(code)}
+                  disabled={locked}
+                />
+                <Flag lang={code} />
+                {name}
+              </label>
+            ))}
+          </div>
+          <span className="patient-pill">
+            <SameSize lang={lang}>{(l) => clockPill(l, now)}</SameSize>
+          </span>
         </div>
       </div>
-      <p className="patient-greeting">{greeting(lang, now)}</p>
-      <p className="patient-day">{dateLine(lang, now)}</p>
+      <p className="patient-greeting">
+        <SameSize lang={lang}>{(l) => greeting(l, now)}</SameSize>
+      </p>
+      <p className="patient-day">
+        <SameSize lang={lang}>{(l) => dateLine(l, now)}</SameSize>
+      </p>
     </header>
   );
 }
@@ -259,7 +334,6 @@ function ComingUp({ lang }: { lang: Lang }) {
   }, []);
 
   if (!memories) return null;
-  const t = STRINGS[lang];
   const now = new Date();
   const next = memories
     .filter((m) => (m.status === "confirmed" || m.status === "tentative") && m.event_at && !hasPassed(m, now))
@@ -270,18 +344,30 @@ function ComingUp({ lang }: { lang: Lang }) {
       {next ? (
         <>
           <p className="patient-card-label">
-            {t.comingUp}
-            {next.status === "tentative" && <span className="patient-tag">{t.notCertain}</span>}
+            <SameSize lang={lang}>{(l) => STRINGS[l].comingUp}</SameSize>
+            {next.status === "tentative" && (
+              <span className="patient-tag">
+                <SameSize lang={lang}>{(l) => STRINGS[l].notCertain}</SameSize>
+              </span>
+            )}
           </p>
           <p className="patient-card-title">
-            {next.summary}, {whenWords(new Date(next.event_at!), now, next.all_day, lang)}
+            <SameSize lang={lang}>{(l) => `${next.summary}, ${whenWords(new Date(next.event_at!), now, next.all_day, l)}`}</SameSize>
           </p>
-          {pickupLine(next, lang) && <p className="patient-card-detail">{pickupLine(next, lang)}</p>}
+          {pickupLine(next, lang) && (
+            <p className="patient-card-detail">
+              <SameSize lang={lang}>{(l) => pickupLine(next, l)}</SameSize>
+            </p>
+          )}
         </>
       ) : (
         <>
-          <p className="patient-card-label">{t.today}</p>
-          <p className="patient-card-title">{t.noPlans}</p>
+          <p className="patient-card-label">
+            <SameSize lang={lang}>{(l) => STRINGS[l].today}</SameSize>
+          </p>
+          <p className="patient-card-title">
+            <SameSize lang={lang}>{(l) => STRINGS[l].noPlans}</SameSize>
+          </p>
         </>
       )}
     </div>
@@ -303,19 +389,20 @@ function ReminderCard({
   onReplay: () => void;
   onDismiss: () => void;
 }) {
-  const t = STRINGS[lang];
   return (
     <div className="patient-card patient-reminder" role="status">
       <div className="patient-reminder-copy">
-        <p className="patient-card-label">{t.reminder}</p>
+        <p className="patient-card-label">
+          <SameSize lang={lang}>{(l) => STRINGS[l].reminder}</SameSize>
+        </p>
         <p className="patient-card-title">{text}</p>
       </div>
       <div className="patient-reminder-actions">
         <button className="patient-play" onClick={onReplay}>
-          {needsTap ? t.hearIt : speaking ? t.orb.speaking : t.hearAgain}
+          <SameSize lang={lang}>{(l) => (needsTap ? STRINGS[l].hearIt : speaking ? STRINGS[l].orb.speaking : STRINGS[l].hearAgain)}</SameSize>
         </button>
         <button className="patient-ok" onClick={onDismiss}>
-          {t.ok}
+          <SameSize lang={lang}>{(l) => STRINGS[l].ok}</SameSize>
         </button>
       </div>
     </div>
@@ -333,11 +420,14 @@ function CareTeamToldCard({ lang, alertId, onResolved }: { lang: Lang; alertId: 
   }, [alertId, onResolved]);
 
   // Says only what is true: the care team was told. Not that help is on the way.
-  const t = STRINGS[lang];
   return (
     <div className="patient-card patient-care-told" role="status">
-      <p className="patient-card-title">{t.careToldTitle}</p>
-      <p className="patient-card-detail">{t.careToldDetail}</p>
+      <p className="patient-card-title">
+        <SameSize lang={lang}>{(l) => STRINGS[l].careToldTitle}</SameSize>
+      </p>
+      <p className="patient-card-detail">
+        <SameSize lang={lang}>{(l) => STRINGS[l].careToldDetail}</SameSize>
+      </p>
     </div>
   );
 }
@@ -384,17 +474,20 @@ function FamilyMessageCard({ lang }: { lang: Lang }) {
     audio.play().catch(() => setPlaying(false));
   }
 
-  const t = STRINGS[lang];
   const from = message.from_name;
   return (
     <div className="patient-card patient-message">
       <Orb mode={playing ? "speaking" : "idle"} onClick={toggle} tabIndex={-1} aria-hidden />
       <div className="patient-message-copy">
-        <p className="patient-message-title">{t.messageTitle(from)}</p>
-        <p className="patient-card-detail">{playing ? `"${message.text}"` : t.messageVoice(from)}</p>
+        <p className="patient-card-title">
+          <SameSize lang={lang}>{(l) => STRINGS[l].messageTitle(from)}</SameSize>
+        </p>
+        <p className="patient-card-detail">
+          {playing ? `"${message.text}"` : <SameSize lang={lang}>{(l) => STRINGS[l].messageVoice(from)}</SameSize>}
+        </p>
       </div>
       <button className="patient-play" onClick={toggle}>
-        {playing ? t.stop : t.play}
+        <SameSize lang={lang}>{(l) => (playing ? STRINGS[l].stop : STRINGS[l].play)}</SameSize>
       </button>
     </div>
   );
