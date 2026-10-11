@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/vela-logo.svg" alt="Vela logo" width="96" />
+  <img src="frontend/public/vela-icon.svg" alt="Vela logo" width="96" />
 </p>
 
 <h1 align="center">Vela</h1>
@@ -15,7 +15,20 @@
   Website (link coming soon)
 </p>
 
+<p align="center">
+  <img alt="ElevenLabs" src="https://img.shields.io/badge/voice-ElevenLabs-0b0b0b?style=flat-square" />
+  <img alt="Gemini" src="https://img.shields.io/badge/extraction-Gemini-ec8a4f?style=flat-square" />
+  <img alt="Tiger Data" src="https://img.shields.io/badge/memory-Tiger%20Data-6b74e0?style=flat-square" />
+  <img alt="Snowflake" src="https://img.shields.io/badge/life%20story-Snowflake-29b5e8?style=flat-square" />
+  <img alt="React" src="https://img.shields.io/badge/React-Vite%20%2B%20TypeScript-3fb08c?style=flat-square" />
+  <img alt="FastAPI" src="https://img.shields.io/badge/API-FastAPI-0f6e56?style=flat-square" />
+</p>
+
 <p align="center"><em>Built in 48 hours at Hack Knight Fall 2026, Queens College.</em></p>
+
+<p align="center">
+  <img src=".github/readme/patient-en.png" alt="The patient screen: the date, Vela's flame to tap, and cards for what's coming up and a family message" width="900" />
+</p>
 
 The name comes from the Spanish *velar*: to keep watch over someone, especially through the night.
 
@@ -23,7 +36,17 @@ The name comes from the Spanish *velar*: to keep watch over someone, especially 
 
 ## Demo video
 
-*Launch video coming soon.*
+<p align="center">
+  <a href=".github/readme/demo.mp4">
+    <img src=".github/readme/demo.gif" alt="Rose asks when Anna is picking her up, and asks again ten minutes later. Vela gives the same calm answer both times." width="720" />
+  </a>
+  <br />
+  <sub>Rose asks the same question ten minutes apart. Vela answers the same way, calmly, every time.</sub>
+</p>
+
+<p align="center">
+  <a href=".github/readme/demo.mp4"><strong>▶ Watch the full launch video</strong></a> (2 minutes)
+</p>
 
 
 ---
@@ -57,11 +80,41 @@ Vela is a calm voice companion on a simple kiosk screen at home, with a separate
 - **Conversations:** every question and answer, each with a receipt showing which memory the answer came from.
 - **Alerts, Life story, Family messages, and Patient** settings, including a one click demo reset.
 
-**Screenshots coming soon:**
-- *The patient screen: the flame, the clock, and the "Coming up" card*
-- *Reviewing a memory on the staff Memories page*
-- *The care team dashboard*
-- *The patient screen in Spanish and Chinese*
+## Screenshots
+
+**In her first language.** One tap switches the whole screen, and the layout doesn't move.
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/readme/patient-es.png" alt="The patient screen in Spanish" /></td>
+    <td width="50%"><img src=".github/readme/patient-zh.png" alt="The patient screen in Chinese" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Español</sub></td>
+    <td align="center"><sub>中文</sub></td>
+  </tr>
+</table>
+
+**For the care team.** What she asked about today, and every answer with a receipt for where it came from.
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/readme/staff-dashboard.png" alt="The Today dashboard: questions in the last 24 hours and what was asked about most" /></td>
+    <td width="50%"><img src=".github/readme/staff-conversations.png" alt="The Conversations page: each answer with the confirmed memory it came from" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Today: what she asked, and how often</sub></td>
+    <td align="center"><sub>Conversations: every answer has a receipt</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src=".github/readme/staff-messages.png" alt="The Family messages page: write a message that plays in a family member's own voice" /></td>
+    <td width="50%" align="center"><img src=".github/readme/patient-tablet.png" alt="The patient screen on a tablet" width="70%" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Family messages, in their own voice</sub></td>
+    <td align="center"><sub>The patient screen on a tablet</sub></td>
+  </tr>
+</table>
 
 ## How it works
 
@@ -167,6 +220,26 @@ npm run dev
 To run without a database (for example, on a network that blocks Postgres), leave `DATABASE_URL` empty and the app uses built in demo data.
 
 ## Project structure
+
+```mermaid
+flowchart LR
+    subgraph FE["frontend/ · React + Vite"]
+        K["Patient kiosk<br/>/patient"]
+        C["Staff pages<br/>/care, PIN protected"]
+    end
+    subgraph BE["backend/ · FastAPI"]
+        MEM["app/memory<br/>memories, review,<br/>life story, records"]
+        VOI["app/voice<br/>agent, sessions,<br/>messages, reminders"]
+        ST["store.py"]
+    end
+    K <-. "voice, WebRTC" .-> EL["ElevenLabs<br/>voice agent"]
+    K --> BE
+    C --> BE
+    MEM --> GEM["Gemini"]
+    MEM --> SF[("Snowflake<br/>life story")]
+    VOI --> EL
+    ST --> TD[("Tiger Data<br/>memories, questions")]
+```
 
 ```
 backend/
