@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type HTMLAttributes, type ReactNode } from "react";
 import { ConversationProvider, useConversation, useConversationControls, useConversationStatus } from "@elevenlabs/react";
 import {
   familyMessageAudioUrl,
@@ -70,6 +70,7 @@ function PatientScreen() {
         onStarting={setStarting}
         onUrgentAlert={setUrgentAlertId}
         announcement={reminders.speaking ? (reminders.reminder?.text ?? null) : null}
+        announcementProgress={reminders.progress}
       />
       <section className="patient-tray">
         {/* One card at a time when something needs attention: an emergency first, then a reminder */}
@@ -101,6 +102,7 @@ function Companion({
   onStarting,
   onUrgentAlert,
   announcement,
+  announcementProgress,
 }: {
   lang: Lang;
   starting: boolean;
@@ -108,8 +110,10 @@ function Companion({
   onUrgentAlert: (alertId: string) => void;
   /** A reminder being spoken right now: the orb speaks and its words show as the caption */
   announcement: string | null;
+  announcementProgress: () => number;
 }) {
   const [caption, setCaption] = useState("");
+  const captionAt = useRef(0);
   // A key, not the words, so it shows in whichever language is picked
   const [error, setError] = useState<"" | "errorConnect" | "errorHearing">("");
   const agentSession = useRef<ReturnType<typeof createAgentSession> | null>(null);
@@ -118,7 +122,10 @@ function Companion({
   const conversation = useConversation({
     onMessage: ({ role, message }) => {
       agentSession.current?.onMessage(role, message);
-      if (role === "agent") setCaption(lastSentences(message));
+      if (role === "agent") {
+        setCaption(message);
+        captionAt.current = performance.now();
+      }
     },
     onConnect: ({ conversationId }) => agentSession.current?.setConversationId(conversationId),
     onDisconnect: () => agentSession.current?.flush(),
@@ -190,9 +197,18 @@ function Companion({
       <div className="patient-words">
         {!error &&
           (announcing || (live && caption) ? (
-            <p className="patient-caption" aria-live="polite">
-              {announcing ? announcement : caption}
-            </p>
+            <Pages
+              key={announcing ? announcement : caption}
+              className="patient-caption"
+              aria-live="polite"
+              text={announcing ? announcement : caption}
+              progress={
+                announcing
+                  ? announcementProgress
+                  : // No word timings for Vela's replies, so estimate from how long it has been talking
+                    () => (performance.now() - captionAt.current) / 1000 / (caption.length / CHARS_PER_SECOND)
+              }
+            />
           ) : (
             <p className="patient-hint">
               {mode !== "speaking" && <SameSize lang={lang}>{(l) => STRINGS[l].hint[mode]}</SameSize>}
@@ -265,8 +281,46 @@ function star(x: number, y: number, r: number) {
   }).join(" ");
 }
 
-function lastSentences(text: string, count = 2) {
-  return text.split(/(?<=[.!?])\s+/).slice(-count).join(" ");
+// Roughly how fast Vela speaks, to page through its replies without word timings
+const CHARS_PER_SECOND = 14;
+
+/**
+ * Text longer than its box, shown a page at a time like subtitles instead of being cut off. The box
+ * is a whole number of lines (--lines in CSS), so a page never shows half a line. `progress` is how
+ * far the voice has got, from 0 to 1, and picks the page. Key it by the text so new text starts on
+ * page one.
+ */
+function Pages({
+  text,
+  progress,
+  className,
+  ...rest
+}: { text: string; progress: () => number; className: string } & HTMLAttributes<HTMLDivElement>) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const latest = useRef(progress);
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    latest.current = progress;
+  });
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!boxRef.current || !textRef.current) return;
+      // offsetHeight ignores the transform that turns the page, so this is the whole text
+      const pages = Math.max(1, Math.ceil(textRef.current.offsetHeight / boxRef.current.clientHeight - 0.01));
+      const done = latest.current();
+      setPage(Math.min(pages - 1, Math.floor((Number.isFinite(done) ? done : 0) * pages)));
+    }, 200);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div ref={boxRef} className={`patient-pages ${className}`} style={{ "--page": page } as CSSProperties} {...rest}>
+      <p ref={textRef}>{text}</p>
+    </div>
+  );
 }
 
 function clockTime(date: Date) {
@@ -482,9 +536,21 @@ function FamilyMessageCard({ lang }: { lang: Lang }) {
         <p className="patient-card-title">
           <SameSize lang={lang}>{(l) => STRINGS[l].messageTitle(from)}</SameSize>
         </p>
-        <p className="patient-card-detail">
-          {playing ? `"${message.text}"` : <SameSize lang={lang}>{(l) => STRINGS[l].messageVoice(from)}</SameSize>}
-        </p>
+        {playing ? (
+          <Pages
+            key={message.id}
+            className="patient-card-detail"
+            text={`"${message.text}"`}
+            progress={() => {
+              const audio = audioRef.current;
+              return audio?.duration ? audio.currentTime / audio.duration : 0;
+            }}
+          />
+        ) : (
+          <p className="patient-card-detail">
+            <SameSize lang={lang}>{(l) => STRINGS[l].messageVoice(from)}</SameSize>
+          </p>
+        )}
       </div>
       <button className="patient-play" onClick={toggle}>
         <SameSize lang={lang}>{(l) => (playing ? STRINGS[l].stop : STRINGS[l].play)}</SameSize>

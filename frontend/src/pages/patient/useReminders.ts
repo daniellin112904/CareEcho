@@ -99,6 +99,11 @@ export function useReminders(busy: boolean) {
     reminder: current,
     speaking,
     needsTap,
+    /** How far the reminder audio has got, from 0 to 1 */
+    progress: () => {
+      const audio = audioRef.current;
+      return audio?.duration ? audio.currentTime / audio.duration : 0;
+    },
     replay: () => current && speak(current),
     dismiss,
   };

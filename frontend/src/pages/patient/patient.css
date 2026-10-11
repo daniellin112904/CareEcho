@@ -212,11 +212,18 @@
   line-height: 1.35;
 }
 
-.patient-caption {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+/* Pages: a box of whole lines. The text moves up one box at a time as the voice goes on. */
+.patient-pages {
+  height: calc(var(--lines) * 1lh);
   overflow: hidden;
+}
+
+.patient-pages > p {
+  transform: translateY(calc(var(--page) * var(--lines) * -1lh));
+}
+
+.patient-caption {
+  --lines: 3;
   color: var(--p-muted);
 }
 
@@ -294,11 +301,10 @@
   min-width: 0;
 }
 
+/* Two lines, playing or not, so the card keeps its size when a message starts */
 .patient-message .patient-card-detail {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  --lines: 2;
+  height: calc(var(--lines) * 1lh);
 }
 
 .patient-play {
@@ -410,7 +416,7 @@
   }
 
   .patient-caption {
-    -webkit-line-clamp: 2;
+    --lines: 2;
   }
 
   .patient-card {
