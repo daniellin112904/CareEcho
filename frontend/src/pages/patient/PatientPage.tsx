@@ -10,7 +10,18 @@ import {
   type Memory,
 } from "../../api";
 import { createAgentSession } from "../../voice/agentTools";
-import { startOfDay, timeWords, whenWords } from "../../when";
+import { atTimeWords, startOfDay, whenWords } from "../../when";
+import {
+  LANGUAGES,
+  STRINGS,
+  clockPill,
+  dateLine,
+  firstMessage,
+  greeting,
+  loadLanguage,
+  saveLanguage,
+  type Lang,
+} from "../../i18n";
 import Orb, { type OrbMode } from "../../voice/Orb";
 import { useReminders } from "./useReminders";
 import "./patient.css";
@@ -24,25 +35,49 @@ export default function PatientPage() {
 }
 
 function PatientScreen() {
+  const [lang, setLang] = useState<Lang>(loadLanguage);
+  // Set while the voice session is being fetched, before the SDK reports "connecting"
+  const [starting, setStarting] = useState(false);
   // The open urgent alert, if any: shown until staff mark it resolved
   const [urgentAlertId, setUrgentAlertId] = useState<string | null>(null);
   const clearUrgent = useCallback(() => setUrgentAlertId(null), []);
   const { status } = useConversationStatus();
-  const reminders = useReminders(status === "connecting" || status === "connected");
+  const talking = status === "connecting" || status === "connected";
+  const reminders = useReminders(talking);
+
+  // Screen readers and fonts follow the chosen language while this screen is open
+  useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.lang;
+    root.lang = lang;
+    return () => {
+      root.lang = previous;
+    };
+  }, [lang]);
+
+  function chooseLanguage(next: Lang) {
+    setLang(next);
+    saveLanguage(next);
+  }
 
   return (
     <main className="patient">
-      <Clock />
+      {/* The language is picked before a conversation, never during one */}
+      <Clock lang={lang} onLanguage={chooseLanguage} locked={starting || talking} />
       <Companion
+        lang={lang}
+        starting={starting}
+        onStarting={setStarting}
         onUrgentAlert={setUrgentAlertId}
         announcement={reminders.speaking ? (reminders.reminder?.text ?? null) : null}
       />
       <section className="patient-tray">
         {/* One card at a time when something needs attention: an emergency first, then a reminder */}
         {urgentAlertId ? (
-          <CareTeamToldCard alertId={urgentAlertId} onResolved={clearUrgent} />
+          <CareTeamToldCard lang={lang} alertId={urgentAlertId} onResolved={clearUrgent} />
         ) : reminders.reminder ? (
           <ReminderCard
+            lang={lang}
             text={reminders.reminder.text}
             speaking={reminders.speaking}
             needsTap={reminders.needsTap}
@@ -51,8 +86,8 @@ function PatientScreen() {
           />
         ) : (
           <>
-            <ComingUp />
-            <FamilyMessageCard />
+            <ComingUp lang={lang} />
+            <FamilyMessageCard lang={lang} />
           </>
         )}
       </section>
@@ -61,17 +96,24 @@ function PatientScreen() {
 }
 
 function Companion({
+  lang,
+  starting,
+  onStarting,
   onUrgentAlert,
   announcement,
 }: {
+  lang: Lang;
+  starting: boolean;
+  onStarting: (starting: boolean) => void;
   onUrgentAlert: (alertId: string) => void;
   /** A reminder being spoken right now: the orb speaks and its words show as the caption */
   announcement: string | null;
 }) {
-  const [starting, setStarting] = useState(false);
   const [caption, setCaption] = useState("");
-  const [error, setError] = useState("");
+  // A key, not the words, so it shows in whichever language is picked
+  const [error, setError] = useState<"" | "errorConnect" | "errorHearing">("");
   const agentSession = useRef<ReturnType<typeof createAgentSession> | null>(null);
+  const t = STRINGS[lang];
 
   const conversation = useConversation({
     onMessage: ({ role, message }) => {
@@ -80,7 +122,7 @@ function Companion({
     },
     onConnect: ({ conversationId }) => agentSession.current?.setConversationId(conversationId),
     onDisconnect: () => agentSession.current?.flush(),
-    onError: () => setError("I'm having trouble hearing you. Tap the flame to try again."),
+    onError: () => setError("errorHearing"),
   });
   const { status, isSpeaking, getInputVolume, getOutputVolume, sendContextualUpdate } = conversation;
   const live = status === "connected";
@@ -88,6 +130,7 @@ function Companion({
 
   // The agent only hears the time once, at the start. Without updates it guesses how
   // much time has passed, so tell it the real time every minute (it doesn't reply to these).
+  // Always in English: the agent reads it, not the patient.
   useEffect(() => {
     if (!live) return;
     const id = setInterval(() => sendContextualUpdate(`The time is now ${clockTime(new Date())}.`), 60_000);
@@ -101,10 +144,11 @@ function Companion({
     }
     setError("");
     setCaption("");
-    setStarting(true);
+    onStarting(true);
     try {
       const session = await startVoiceSession();
-      agentSession.current = createAgentSession(session.dynamic_variables.patient_name ?? "The patient", {
+      const name = session.dynamic_variables.patient_name;
+      agentSession.current = createAgentSession(name ?? "The patient", {
         onUrgentAlert,
         tellAgent: sendContextualUpdate,
       });
@@ -113,31 +157,23 @@ function Companion({
         connectionType: "webrtc",
         dynamicVariables: session.dynamic_variables,
         clientTools: agentSession.current.clientTools,
+        // The language picks the agent's language preset (greeting and voice model). The greeting
+        // is also sent directly, in case the preset doesn't apply. language_detection still lets
+        // the patient switch language mid conversation.
+        overrides: { agent: { language: lang, ...(name && { firstMessage: firstMessage(lang, name) }) } },
       });
     } catch {
-      setError("I can't connect right now. Tap the flame to try again.");
+      setError("errorConnect");
     } finally {
-      setStarting(false);
+      onStarting(false);
     }
   }
 
   const announcing = announcement !== null && !live && !busy;
   const mode: OrbMode =
     busy ? "connecting" : live ? (isSpeaking ? "speaking" : "listening") : announcing ? "speaking" : "idle";
-  const label = announcing
-    ? "A reminder"
-    : {
-        idle: "Talk to me",
-    connecting: "One moment…",
-        listening: "I'm listening",
-        speaking: "Speaking…",
-      }[mode];
-  const hint = {
-    idle: "Tap the flame and ask me anything",
-    connecting: "Getting ready to listen",
-    listening: "Tap the flame when you're done",
-    speaking: "",
-  }[mode];
+  const label = announcing ? t.orb.reminder : t.orb[mode];
+  const hint = mode === "speaking" ? "" : t.hint[mode];
 
   return (
     <section className="patient-center">
@@ -145,10 +181,13 @@ function Companion({
         mode={mode}
         getLevel={() => (isSpeaking ? getOutputVolume() : getInputVolume())}
         onClick={toggle}
-        aria-label={live ? "Stop talking" : "Start talking"}
+        aria-label={live ? t.stopTalking : t.startTalking}
       />
       <p className="patient-status" aria-live="polite">
-        {error || label}
+        {/* A bigger target for the same action; keyboard users already have the orb */}
+        <button type="button" className="patient-status-button" onClick={toggle} tabIndex={-1}>
+          {error ? t[error] : label}
+        </button>
       </p>
       <div className="patient-words">
         {!error &&
@@ -172,17 +211,12 @@ function clockTime(date: Date) {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
-function Clock() {
+function Clock({ lang, onLanguage, locked }: { lang: Lang; onLanguage: (lang: Lang) => void; locked: boolean }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 15_000);
     return () => clearInterval(id);
   }, []);
-
-  const hour = now.getHours();
-  const part = hour < 5 ? "at night" : hour < 12 ? "in the morning" : hour < 17 ? "in the afternoon" : hour < 21 ? "in the evening" : "at night";
-  const greeting = hour >= 5 && hour < 12 ? "Good morning" : hour >= 12 && hour < 17 ? "Good afternoon" : "Good evening";
-  const clock = `${hour % 12 || 12}:${String(now.getMinutes()).padStart(2, "0")}`;
 
   return (
     <header className="patient-top">
@@ -191,19 +225,27 @@ function Clock() {
           <img src="/vela-logo.svg" alt="" />
           Vela
         </span>
-        <span className="patient-pill">
-          {clock} {part}
-        </span>
+        <div className="patient-bar-end">
+          <label className="patient-pill patient-language">
+            <span className="patient-language-label">{STRINGS[lang].language}</span>
+            <select value={lang} onChange={(event) => onLanguage(event.target.value as Lang)} disabled={locked}>
+              {LANGUAGES.map(({ code, name }) => (
+                <option key={code} value={code} lang={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="patient-pill">{clockPill(lang, now)}</span>
+        </div>
       </div>
-      <p className="patient-greeting">{greeting}</p>
-      <p className="patient-day">
-        {now.toLocaleDateString([], { weekday: "long" })}, {now.toLocaleDateString([], { month: "long", day: "numeric" })}
-      </p>
+      <p className="patient-greeting">{greeting(lang, now)}</p>
+      <p className="patient-day">{dateLine(lang, now)}</p>
     </header>
   );
 }
 
-function ComingUp() {
+function ComingUp({ lang }: { lang: Lang }) {
   const [memories, setMemories] = useState<Memory[] | null>(null);
   useEffect(() => {
     const load = () =>
@@ -217,6 +259,7 @@ function ComingUp() {
   }, []);
 
   if (!memories) return null;
+  const t = STRINGS[lang];
   const now = new Date();
   const next = memories
     .filter((m) => (m.status === "confirmed" || m.status === "tentative") && m.event_at && !hasPassed(m, now))
@@ -227,18 +270,18 @@ function ComingUp() {
       {next ? (
         <>
           <p className="patient-card-label">
-            Coming up
-            {next.status === "tentative" && <span className="patient-tag">Not certain yet</span>}
+            {t.comingUp}
+            {next.status === "tentative" && <span className="patient-tag">{t.notCertain}</span>}
           </p>
           <p className="patient-card-title">
-            {next.summary}, {whenWords(new Date(next.event_at!), now, next.all_day)}
+            {next.summary}, {whenWords(new Date(next.event_at!), now, next.all_day, lang)}
           </p>
-          {pickupLine(next) && <p className="patient-card-detail">{pickupLine(next)}</p>}
+          {pickupLine(next, lang) && <p className="patient-card-detail">{pickupLine(next, lang)}</p>}
         </>
       ) : (
         <>
-          <p className="patient-card-label">Today</p>
-          <p className="patient-card-title">No plans yet today</p>
+          <p className="patient-card-label">{t.today}</p>
+          <p className="patient-card-title">{t.noPlans}</p>
         </>
       )}
     </div>
@@ -246,37 +289,40 @@ function ComingUp() {
 }
 
 function ReminderCard({
+  lang,
   text,
   speaking,
   needsTap,
   onReplay,
   onDismiss,
 }: {
+  lang: Lang;
   text: string;
   speaking: boolean;
   needsTap: boolean;
   onReplay: () => void;
   onDismiss: () => void;
 }) {
+  const t = STRINGS[lang];
   return (
     <div className="patient-card patient-reminder" role="status">
       <div className="patient-reminder-copy">
-        <p className="patient-card-label">Reminder</p>
+        <p className="patient-card-label">{t.reminder}</p>
         <p className="patient-card-title">{text}</p>
       </div>
       <div className="patient-reminder-actions">
         <button className="patient-play" onClick={onReplay}>
-          {needsTap ? "Hear it" : speaking ? "Speaking…" : "Hear again"}
+          {needsTap ? t.hearIt : speaking ? t.orb.speaking : t.hearAgain}
         </button>
         <button className="patient-ok" onClick={onDismiss}>
-          OK
+          {t.ok}
         </button>
       </div>
     </div>
   );
 }
 
-function CareTeamToldCard({ alertId, onResolved }: { alertId: string; onResolved: () => void }) {
+function CareTeamToldCard({ lang, alertId, onResolved }: { lang: Lang; alertId: string; onResolved: () => void }) {
   useEffect(() => {
     const check = () =>
       getAlertStatus(alertId)
@@ -287,15 +333,16 @@ function CareTeamToldCard({ alertId, onResolved }: { alertId: string; onResolved
   }, [alertId, onResolved]);
 
   // Says only what is true: the care team was told. Not that help is on the way.
+  const t = STRINGS[lang];
   return (
     <div className="patient-card patient-care-told" role="status">
-      <p className="patient-card-title">Your care team has been told</p>
-      <p className="patient-card-detail">Stay where you are if you can. You're not alone.</p>
+      <p className="patient-card-title">{t.careToldTitle}</p>
+      <p className="patient-card-detail">{t.careToldDetail}</p>
     </div>
   );
 }
 
-function FamilyMessageCard() {
+function FamilyMessageCard({ lang }: { lang: Lang }) {
   const [message, setMessage] = useState<Omit<FamilyMessage, "voice_id"> | null>(null);
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -337,16 +384,17 @@ function FamilyMessageCard() {
     audio.play().catch(() => setPlaying(false));
   }
 
+  const t = STRINGS[lang];
   const from = message.from_name;
   return (
     <div className="patient-card patient-message">
       <Orb mode={playing ? "speaking" : "idle"} onClick={toggle} tabIndex={-1} aria-hidden />
       <div className="patient-message-copy">
-        <p className="patient-message-title">Recorded message from {from}</p>
-        <p className="patient-card-detail">{playing ? `"${message.text}"` : `In ${from}'s own voice`}</p>
+        <p className="patient-message-title">{t.messageTitle(from)}</p>
+        <p className="patient-card-detail">{playing ? `"${message.text}"` : t.messageVoice(from)}</p>
       </div>
       <button className="patient-play" onClick={toggle}>
-        {playing ? "Stop" : "Play"}
+        {playing ? t.stop : t.play}
       </button>
     </div>
   );
@@ -358,9 +406,9 @@ function hasPassed(memory: Memory, now: Date) {
   return memory.all_day ? startOfDay(at) < startOfDay(now) : at < now;
 }
 
-function pickupLine(memory: Memory) {
+function pickupLine(memory: Memory, lang: Lang) {
   const { who, pickup_at } = memory.details ?? {};
   if (typeof who !== "string") return "";
-  if (typeof pickup_at === "string") return `${who} picks you up at ${timeWords(new Date(pickup_at))}`;
-  return `With ${who}`;
+  if (typeof pickup_at === "string") return STRINGS[lang].pickup(who, atTimeWords(new Date(pickup_at), lang));
+  return STRINGS[lang].withWho(who);
 }

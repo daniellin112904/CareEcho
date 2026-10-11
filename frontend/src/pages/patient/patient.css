@@ -53,6 +53,55 @@
   font-weight: 500;
 }
 
+.patient-bar-end {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The language picker: a pill like the clock, with its name in the chosen language */
+.patient-language {
+  gap: 10px;
+  padding-right: 14px;
+  cursor: pointer;
+}
+
+.patient-language-label {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--p-muted);
+}
+
+.patient-language select {
+  height: 100%;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.patient-language select:focus-visible {
+  outline: none;
+}
+
+.patient-language:focus-within {
+  outline: 2px solid var(--p-ink);
+  outline-offset: 2px;
+}
+
+/* Locked during a conversation: pick a language, then tap the flame */
+.patient-language:has(select:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.patient-language select:disabled {
+  cursor: default;
+}
+
 .patient-greeting {
   margin-top: clamp(12px, 3vh, 28px);
   font-size: clamp(18px, 2.2vw, 22px);
@@ -78,9 +127,10 @@
   container-type: size;
 }
 
-/* Sized from the space left between the date and the card, minus room for the status lines */
+/* Sized from the space left between the date and the card, minus room for the status lines.
+   Never small: it's the one thing the patient has to find and tap. */
 .patient-center .orb {
-  --orb-size: clamp(96px, min(100cqh - 190px, 60cqw), 300px);
+  --orb-size: clamp(180px, min(100cqh - 190px, 60cqw), 340px);
 }
 
 .patient-status {
@@ -90,6 +140,19 @@
   font-weight: 300;
   letter-spacing: -0.02em;
   line-height: 1.15;
+}
+
+/* The status words start or stop a conversation too, like the flame above them */
+.patient-status-button {
+  padding: 4px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .patient-hint {
@@ -211,18 +274,40 @@
   font-weight: 500;
 }
 
-/* Short laptop screens: give the orb back some of the headline's height */
+/* Short laptop screens: the greeting and date shrink first, then the spacing, so the orb keeps
+   its size */
 @media (max-height: 780px) {
+  .patient {
+    gap: 10px;
+    padding-block: 16px;
+  }
+
   .patient-greeting {
-    margin-top: 8px;
+    margin-top: 6px;
+    font-size: 17px;
   }
 
   .patient-day {
-    font-size: clamp(36px, 5vw, 52px);
+    margin-top: 0;
+    font-size: clamp(28px, 3.6vw, 38px);
+  }
+
+  .patient-center .orb {
+    --orb-size: clamp(180px, min(100cqh - 130px, 60cqw), 340px);
   }
 
   .patient-status {
-    margin-top: 14px;
+    margin-top: 8px;
+    font-size: clamp(26px, 3vw, 32px);
+  }
+
+  .patient-words {
+    --caption-size: 20px;
+    margin-top: 4px;
+  }
+
+  .patient-card {
+    padding: 14px 20px;
   }
 }
 
@@ -271,4 +356,37 @@
   font-family: var(--v-body);
   font-size: 18px;
   font-weight: 500;
+}
+
+/* Very short screens (a laptop with browser toolbars): two caption lines and tighter cards */
+@media (max-height: 660px) {
+  .patient-day {
+    font-size: clamp(26px, 3.2vw, 32px);
+  }
+
+  .patient-words {
+    height: calc(var(--caption-size) * 1.35 * 2);
+  }
+
+  .patient-caption {
+    -webkit-line-clamp: 2;
+  }
+
+  .patient-card {
+    padding: 10px 18px;
+  }
+
+  .patient-card-title {
+    margin-top: 2px;
+    font-size: clamp(22px, 2.6vw, 26px);
+  }
+
+  .patient-card-detail {
+    margin-top: 2px;
+  }
+
+  .patient-play,
+  .patient-ok {
+    height: 48px;
+  }
 }
