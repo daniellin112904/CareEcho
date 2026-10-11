@@ -1,4 +1,14 @@
-import { getAgentFamilyMessages, getFacts, logInteraction, logStatement, raiseAlert, searchLifeStory, type StatementKind } from "../api";
+import {
+  ApiError,
+  getAgentFamilyMessages,
+  getFacts,
+  logInteraction,
+  logStatement,
+  raiseAlert,
+  searchLifeStory,
+  setPatientReminder,
+  type StatementKind,
+} from "../api";
 
 const KINDS: StatementKind[] = ["medication", "meal", "activity", "feeling", "other"];
 
@@ -7,6 +17,9 @@ const KINDS: StatementKind[] = ["medication", "meal", "activity", "feeling", "ot
 const LOOKUP_FAILED = "NO_MEMORY: the memory list couldn't be loaded. Say you are not sure right now.";
 const LIFE_STORY_FAILED = "LIFE_STORY_FAILED: the life story couldn't be reached. Say you are not sure right now.";
 const MESSAGES_FAILED = "NO_MESSAGES: the messages couldn't be loaded. Say you can't check messages right now.";
+// The backend answers 422 when no clear time was given: the reminder isn't saved, so ask
+const NEED_TIME = "NEED_TIME: ask them what time they would like.";
+const REMINDER_FAILED = "REMINDER_FAILED: say you could not set it right now.";
 
 // Phrases in English and Spanish, as whole words. JavaScript's \b doesn't know accented
 // letters ("me caí"), so Unicode letter lookarounds mark the word edges instead.
@@ -246,6 +259,39 @@ export function createAgentSession(patientName: string, hooks: SessionHooks) {
         console.warn("log_patient_statement failed", err);
       }
       return "Saved as something they said, not as a confirmed fact.";
+    },
+
+    // Tool parameters all arrive as strings; empty ones mean "not said"
+    async set_reminder({
+      task,
+      said,
+      time,
+      day,
+      in_minutes,
+    }: {
+      task?: string;
+      said?: string;
+      time?: string;
+      day?: string;
+      in_minutes?: string | number;
+    }) {
+      if (turn) turn.topic ||= "Reminder";
+      const minutes = String(in_minutes ?? "").trim();
+      try {
+        const saved = await setPatientReminder({
+          task: task ?? "",
+          said: said || turn?.question || "",
+          time: time?.trim() || null,
+          day: day?.trim() || null,
+          // A number when it is one; anything else goes as it is, and the backend says what's wrong
+          in_minutes: minutes ? (/^\d+$/.test(minutes) ? Number(minutes) : minutes) : null,
+        });
+        return `SAVED: Reminder set ${saved.when_words} to ${saved.summary}. Tell them that.`;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 422) return NEED_TIME;
+        console.warn("set_reminder failed", err);
+        return REMINDER_FAILED;
+      }
     },
   };
 
