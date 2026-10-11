@@ -53,6 +53,55 @@
   font-weight: 500;
 }
 
+.patient-bar-end {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The language picker: a pill like the clock, with its name in the chosen language */
+.patient-language {
+  gap: 10px;
+  padding-right: 14px;
+  cursor: pointer;
+}
+
+.patient-language-label {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--p-muted);
+}
+
+.patient-language select {
+  height: 100%;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.patient-language select:focus-visible {
+  outline: none;
+}
+
+.patient-language:focus-within {
+  outline: 2px solid var(--p-ink);
+  outline-offset: 2px;
+}
+
+/* Locked during a conversation: pick a language, then tap the flame */
+.patient-language:has(select:disabled) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.patient-language select:disabled {
+  cursor: default;
+}
+
 .patient-greeting {
   margin-top: clamp(12px, 3vh, 28px);
   font-size: clamp(18px, 2.2vw, 22px);
@@ -90,6 +139,19 @@
   font-weight: 300;
   letter-spacing: -0.02em;
   line-height: 1.15;
+}
+
+/* The status words start or stop a conversation too, like the flame above them */
+.patient-status-button {
+  padding: 4px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .patient-hint {
