@@ -7,6 +7,12 @@ const SOURCE_LABEL: Record<string, string> = {
   patient: "Said by the patient, not verified",
 };
 
+// Answers from Vela's other tools: their topic is set in frontend/src/voice/agentTools.ts
+const TOOL_SOURCE: Record<string, string> = {
+  "Life story": "From the life story",
+  "Family messages": "From a family message",
+};
+
 export default function ConversationsPage() {
   const [interactions, setInteractions] = useState<Interaction[] | null>(null);
   const [error, setError] = useState("");
@@ -72,23 +78,27 @@ function Receipt({ answer }: { answer: Interaction }) {
   return (
     <div className="receipts">
       {answer.sources.map((source) => (
-        <SourceReceipt key={source.id} source={source} />
+        // When the care team was asked, a matched memory may be only related, not what the answer was based on
+        <SourceReceipt key={source.id} source={source} label={answer.answered ? "Based on" : "Related"} />
       ))}
       {!answer.answered && <span className="alert-kind">Not in memory · care team asked</span>}
       {answer.sources.length === 0 && (
         <span className="memory-when">
-          {!answer.answered ? checked : answer.checked === 0 ? "Not from a memory" : `${checked}, none used in the answer`}
+          {!answer.answered
+            ? checked
+            : (TOOL_SOURCE[answer.topic] ??
+              (answer.checked === 0 ? "Not from a memory" : `${checked}, none used in the answer`))}
         </span>
       )}
     </div>
   );
 }
 
-function SourceReceipt({ source }: { source: MemorySource }) {
+function SourceReceipt({ source, label }: { source: MemorySource; label: string }) {
   return (
     <details className="receipt">
       <summary>
-        <span className="receipt-label">Based on</span>
+        <span className="receipt-label">{label}</span>
         <span className="receipt-summary">{source.summary}</span>
         <span className="memory-status" data-status={source.status}>
           {source.status}

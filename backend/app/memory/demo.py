@@ -9,9 +9,9 @@ The memories cover every rule the agent depends on:
 - The same appointment's earlier version (pickup at 2:00), superseded: never spoken, but
   receipts and history can still show it.
 - Lunch with Joan, tentative: said as not certain.
-- Mark, a person with no time: never expires.
 - A haircut waiting for review, pending: never spoken.
-Names don't overlap between memories on purpose: answer receipts match memories by their words
+Who people are (Mark is her son, in Boston) is in her life story, not here: memories are for
+plans and what changes. Names don't overlap between memories on purpose: answer receipts match memories by their words
 (receipt() in app/memory/events.py), so two memories naming Anna would both claim an answer.
 """
 
@@ -71,10 +71,6 @@ def demo_memories(now: datetime) -> list[dict]:
             "Lunch with Joan", "plan", "tentative", "caregiver_session",
             f"Joan said she might come by for lunch {_day_words(at(1, 12, 30), told)}, we'll see.",
             event_at=at(1, 12, 30), details={"who": "Joan"}, confirmed_at=told,
-        ),
-        row(
-            "Mark is your son and lives in Boston", "person", "confirmed", "caregiver_typed",
-            "Mark is her son. He lives in Boston.", confirmed_at=told_earlier,
         ),
         row(
             "Haircut", "appointment", "pending", "caregiver_session",

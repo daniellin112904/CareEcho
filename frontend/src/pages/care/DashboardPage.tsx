@@ -19,7 +19,8 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, []);
 
-  const top = data?.by_topic[0];
+  // The headline is about a subject, not "Asked the care team" or "Other" (set in app/memory/events.py)
+  const top = data?.by_topic.find((t) => !NOT_A_SUBJECT.has(t.topic));
   const peak = Math.max(1, ...(data?.by_hour.map((h) => h.asks) ?? []));
   const alerts = Object.entries(data?.open_alerts ?? {}).filter(([, n]) => n) as [AlertKind, number][];
 
@@ -30,10 +31,9 @@ export default function DashboardPage() {
         {error && <p className="care-error">{error}</p>}
         {data && (
           <p className="care-lede dash-headline">
-            {top
-              ? `Asked about most today: ${top.topic}, ${times(top.asks)}.`
-              : `The patient hasn't asked Vela anything yet today.`}{" "}
-            {data.asks_today} {data.asks_today === 1 ? "question" : "questions"} in all.
+            {data.asks_today === 0
+              ? "The patient hasn't asked Vela anything yet today."
+              : `${top ? `Asked about most today: ${top.topic}, ${times(top.asks)}. ` : ""}${data.asks_today} ${data.asks_today === 1 ? "question" : "questions"} in all.`}
           </p>
         )}
       </section>
@@ -113,6 +113,8 @@ export default function DashboardPage() {
     </>
   );
 }
+
+const NOT_A_SUBJECT = new Set(["Asked the care team", "Asked for help", "Other"]);
 
 function times(n: number) {
   return n === 1 ? "once" : `${n} times`;

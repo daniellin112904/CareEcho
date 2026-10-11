@@ -35,6 +35,9 @@ PATIENT = "test-records"
 # Every module that reads the patient ID when called, pointed at the test patient while it runs
 PATIENT_MODULES = (store, events, routes, reminders, messages)
 NOW = datetime.now(timezone.utc)
+# What a demo reset should leave: every demo row, and the ones Vela may say
+DEMO_ROWS = len(demo_memories(NOW))
+DEMO_CURRENT = sum(m["status"] in ("confirmed", "tentative") for m in demo_memories(NOW))
 failures = 0
 message_ids: list[str] = []
 
@@ -71,7 +74,7 @@ def answer(client, question, reply, **fields):
 def run(client: TestClient, pin: dict):
     # Reset gives the test patient the demo memories (and checks the reset itself, starting empty)
     result = store.reset_demo(PATIENT, "Test patient", demo_memories(NOW))
-    check("reset seeds the memories", result["memories"] == 5 and len(store.current_memories(PATIENT)) == 3, result)
+    check("reset seeds the memories", result["memories"] == DEMO_ROWS and len(store.current_memories(PATIENT)) == DEMO_CURRENT, result)
     dentist = current("Dentist appointment")
 
     # Answers (the interactions hypertable), with their topic set by code
@@ -197,7 +200,7 @@ def run(client: TestClient, pin: dict):
     check("after a reset the dashboard is empty at once (aggregate recounted)",
           board["asks_today"] == 0 and sum(h["asks"] for h in board["by_hour"]) == 0, board["asks_today"])
     check("after a reset the demo memories are back, and family messages are kept",
-          len(store.current_memories(PATIENT)) == 3
+          len(store.current_memories(PATIENT)) == DEMO_CURRENT
           and client.get("/family-messages/latest").json()["message"]["id"] == kept_message["id"])
     # The reset's recount must leave the hour in progress live (a recount that included it
     # froze that hour's count until the hour ended: found by this suite, October 10, 2026)
