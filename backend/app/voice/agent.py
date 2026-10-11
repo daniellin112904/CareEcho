@@ -73,7 +73,8 @@ FIRST_MESSAGE = "Hi {{patient_name}}, it's Vela. What would you like to talk abo
 # First-language mode: English by default; the agent switches when the patient speaks one of
 # these. ElevenLabs requires an English-only speech model for English, so each other language
 # switches to the multilingual one.
-MULTILINGUAL_TTS = {"model_id": "eleven_flash_v2_5"}
+SPEECH_SPEED = 0.85  # ElevenLabs allows 0.7–1.2; slower is easier for older adults to follow
+MULTILINGUAL_TTS = {"model_id": "eleven_flash_v2_5", "speed": SPEECH_SPEED}
 LANGUAGE_PRESETS = {
     "es": {
         "overrides": {
@@ -197,7 +198,11 @@ AGENT_CONFIG = {
     },
 }
 
-TTS_CONFIG = {"voice_id": DEFAULT_VOICE_ID, "model_id": "eleven_flash_v2"}
+TTS_CONFIG = {
+    "voice_id": DEFAULT_VOICE_ID,
+    "model_id": "eleven_flash_v2",
+    "speed": SPEECH_SPEED,
+}
 
 # Private agent: sessions need a token from our backend, so the agent ID alone is useless.
 # The patient screen's language picker sets the starting language, and the greeting in case
