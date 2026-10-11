@@ -384,9 +384,71 @@ def list_statements(patient_id: str, since: datetime) -> list[dict]:
         rows = [r for r in _read("statements")
                 if r["patient_id"] == patient_id and datetime.fromisoformat(r["ts"]) >= since]
         return sorted(rows, key=lambda r: r["ts"], reverse=True)
+    # Reminders the patient asked for are self-reported too, but they're requests, not things she did
     return _all("SELECT id, created_at AS ts, summary AS text, kind, status FROM memories "
-                "WHERE patient_id = %s AND status = 'self_reported' AND created_at >= %s ORDER BY created_at DESC",
-                (patient_id, since))
+                "WHERE patient_id = %s AND status = 'self_reported' AND kind <> 'reminder' AND created_at >= %s "
+                "ORDER BY created_at DESC", (patient_id, since))
+
+
+# Reminders the patient asked for ("Remind me at 5 to water my tomato plants"): memories with kind
+# reminder, source patient, and status self_reported, so like self-reports they're never told to
+# the agent as facts. Only app/voice/reminders.py reads them, to say each one at its time.
+
+
+_PATIENT_REMINDER = "kind = 'reminder' AND source = 'patient'"
+
+
+def add_patient_reminder(patient_id: str, task: str, said: str, at: datetime) -> dict:
+    """Returns the memory row, the same with or without the database."""
+    if not db.enabled():
+        row = {"id": uuid.uuid4().hex, "patient_id": patient_id, "kind": "reminder", "summary": task, "details": None,
+               "event_at": at.isoformat(), "all_day": False, "status": "self_reported", "certainty": None,
+               "source": "patient", "source_quote": said, "session_id": None, "supersedes_id": None,
+               "created_at": datetime.now(timezone.utc).isoformat(), "confirmed_at": None}
+        return _insert("patient_reminders", row)
+    return _one("INSERT INTO memories (patient_id, kind, summary, event_at, status, source, source_quote) "
+                f"VALUES (%s, 'reminder', %s, %s, 'self_reported', 'patient', %s) RETURNING {_MEMORY_COLUMNS}",
+                (patient_id, task, at, said))
+
+
+def patient_reminders(patient_id: str, since: datetime) -> list[dict]:
+    """Reminders the patient asked for, due from `since` on and not cancelled, soonest first."""
+    if not db.enabled():
+        rows = [r for r in _read("patient_reminders") if r["patient_id"] == patient_id
+                and r["status"] == "self_reported" and datetime.fromisoformat(r["event_at"]) >= since]
+        return sorted(rows, key=lambda r: datetime.fromisoformat(r["event_at"]))
+    return _all(f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE patient_id = %s AND {_PATIENT_REMINDER} "
+                "AND status = 'self_reported' AND event_at >= %s ORDER BY event_at", (patient_id, since))
+
+
+def cancel_patient_reminder(patient_id: str, reminder_id: str) -> dict | None:
+    """Staff cancel a reminder the patient asked for: kept, as 'cancelled', and never said.
+    Separate from cancel_memory, which stays limited to confirmed plans. None if there's no such
+    reminder (any other memory counts as not found); Conflict if it's already cancelled."""
+    if not _is_uuid(reminder_id):
+        return None
+    if not db.enabled():
+        with _lock:
+            rows = _read("patient_reminders")
+            match = next((r for r in rows if r["id"] == reminder_id and r["patient_id"] == patient_id), None)
+            if match is None:
+                return None
+            if match["status"] != "self_reported":
+                raise Conflict(f"This reminder is already {match['status']}.")
+            match["status"] = "cancelled"
+            _write("patient_reminders", rows)
+        return match
+    with db.pool().connection() as conn:
+        row = conn.execute(
+            f"UPDATE memories SET status = 'cancelled' WHERE id = %s AND patient_id = %s AND {_PATIENT_REMINDER} "
+            f"AND status = 'self_reported' RETURNING {_MEMORY_COLUMNS}", (reminder_id, patient_id)).fetchone()
+        if row is None:
+            current = conn.execute(f"SELECT status FROM memories WHERE id = %s AND patient_id = %s AND {_PATIENT_REMINDER}",
+                                   (reminder_id, patient_id)).fetchone()
+            if current is None:
+                return None
+            raise Conflict(f"This reminder is already {current['status']}.")
+    return _plain(row)
 
 
 # Alerts for the care team. IDs come from the patient screen's URL too, so anything that isn't
@@ -596,7 +658,7 @@ def reset_demo(patient_id: str, name: str, memories: list[dict]) -> dict:
         removed = {}
         with _lock:
             _demo_rows = None
-            for table in ("interactions", "statements", "alerts", "reminders_now"):
+            for table in ("interactions", "statements", "alerts", "reminders_now", "patient_reminders"):
                 rows = _read(table)
                 kept = [r for r in rows if r.get("patient_id", PATIENT_ID) != patient_id]
                 removed[table] = len(rows) - len(kept)
